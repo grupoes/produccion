@@ -1,0 +1,77 @@
+<?php
+
+namespace App\Controllers;
+
+class Notificaciones extends BaseController
+{
+    public function index()
+    {
+        if (!session()->get('isLoggedIn')) {
+            return redirect()->to(base_url());
+        }
+
+        return view('carreras/index');
+    }
+
+    public function getNotificacion()
+    {
+        $id = session()->get('id_user');
+
+        $ruta = getenv('URL_BACKEND') . 'notificaciones/' . $id;
+
+        $client = \Config\Services::curlrequest();
+
+        $response = $client->get($ruta, [
+            'headers' => [
+                'Accept' => 'application/json'
+            ],
+            'http_errors' => false
+        ]);
+
+        $data = json_decode($response->getBody(), true);
+
+        if (!$data || $data['status'] == 500 || $data['status'] == 400) {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => $data['messages']['error']
+            ]);
+        }
+
+        return $this->response->setJSON([
+            'status' => 'success',
+            'message' => $data['message'],
+            'result' => $data['result']
+        ]);
+    }
+
+    public function countNotificacion()
+    {
+        $id = session()->get('id_user');
+
+        $ruta = getenv('URL_BACKEND') . 'count-notificaciones/' . $id;
+
+        $client = \Config\Services::curlrequest();
+
+        $response = $client->get($ruta, [
+            'headers' => [
+                'Accept' => 'application/json'
+            ],
+            'http_errors' => false
+        ]);
+
+        $data = json_decode($response->getBody(), true);
+
+        if (!$data || $data['status'] == 500 || $data['status'] == 400) {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => $data['messages']['error']
+            ]);
+        }
+
+        return $this->response->setJSON([
+            'status' => 'success',
+            'message' => $data['message'],
+            'result' => $data['result']
+        ]);
+    }
+}
