@@ -43,3 +43,13 @@ $routes->get('categorias/delete/(:num)', 'Tareas::deleteType/$1');
 $routes->get('tareas/delete/(:num)', 'Tareas::delete/$1');
 $routes->get('tareas/get-row/(:num)', 'Tareas::getTarea/$1');
 $routes->get('tareas/get-by-rol/(:num)', 'Clientes::getTareaByRol/$1');
+
+$routes->get('actividades', 'Actividades::getActividades');
+$routes->get('getActividadRow/(:num)', 'Actividades::getActividadRow/$1');
+$routes->post('update-link-drive', 'Actividades::updateLinkDrive');
+$routes->post('getEstadosActividades', 'Actividades::getEstadosActividades');
+
+$routes->post('update-estado-tarea', 'Actividades::updateEstadoTarea');
+
+$routes->get('horario/get-by-id/(:num)', 'Horario::getHorarioById/$1');
+$routes->get('horario/get-usuario', 'Horario::getHorarioUsuario');

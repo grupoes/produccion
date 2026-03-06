@@ -10,7 +10,7 @@
                 <h2 class="text-3xl font-black tracking-tight text-slate-900 dark:text-white">Potenciales Clientes</h2>
                 <p class="text-slate-500 dark:text-slate-400 mt-1 text-sm font-medium">Gestión y seguimiento de prospectos académicos</p>
             </div>
-            <button onclick="openModal('modalNuevoProspecto')"
+            <button onclick="nuevoProspecto()"
                 class="bg-primary hover:bg-primary/90 text-white px-5 py-2.5 rounded-xl flex items-center gap-2 font-bold text-sm transition-all shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]">
                 <span class="material-symbols-outlined text-[20px]">person_add</span>
                 <span>Nuevo Prospecto</span>
@@ -19,30 +19,10 @@
 
         <!-- Filters & Table Card -->
         <div class="bg-white dark:bg-neutral-dark rounded-2xl border border-slate-200 dark:border-border-dark overflow-hidden shadow-sm transition-all">
-            <div class="p-5 border-b border-slate-100 dark:border-border-dark bg-slate-50/30 dark:bg-slate-800/20 backdrop-blur-sm">
-                <div class="flex flex-wrap items-center justify-between gap-4">
-                    <div class="relative max-w-md w-full">
-                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[20px]">search</span>
-                        <input
-                            class="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-background-dark border border-slate-200 dark:border-border-dark rounded-xl text-sm focus:ring-2 focus:ring-primary focus:border-transparent outline-none text-slate-900 dark:text-white placeholder:text-slate-400 transition-all"
-                            placeholder="Buscar por contacto, universidad o carrera..." type="text" />
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <button class="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded-lg transition-colors">
-                            <span class="material-symbols-outlined text-[20px]">filter_list</span>
-                            <span>Filtros</span>
-                        </button>
-                        <button class="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded-lg transition-colors">
-                            <span class="material-symbols-outlined text-[20px]">download</span>
-                            <span>Exportar</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
 
             <!-- Table Section -->
-            <div class="overflow-x-auto custom-scrollbar">
-                <table class="w-full text-left border-collapse">
+            <div class="overflow-x-auto custom-scrollbar p-4">
+                <table id="dtProspectos" class="w-full text-left border-collapse" style="width:100%">
                     <thead>
                         <tr class="bg-slate-50/50 dark:bg-slate-800/40 text-slate-500 dark:text-slate-400 uppercase text-[11px] font-bold tracking-widest border-b border-slate-100 dark:border-border-dark">
                             <th class="px-6 py-4">Contacto</th>
@@ -54,172 +34,12 @@
                             <th class="px-6 py-4 text-right">Acciones</th>
                         </tr>
                     </thead>
-                    <tbody class="divide-y divide-slate-100 dark:divide-border-dark whitespace-nowrap">
-                        <!-- Prospect 1 -->
-                        <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
-                            <td class="px-6 py-4">
-                                <div class="flex items-center gap-3">
-                                    <div class="size-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">MA</div>
-                                    <div class="flex flex-col">
-                                        <span class="text-sm font-bold text-slate-900 dark:text-white">Marcos Andreu</span>
-                                        <span class="text-[11px] text-slate-500">+51 987 654 321</span>
-                                    </div>
-                                </div>
-                            </td>
-                            <td class="px-6 py-4 text-center">
-                                <span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-400">Pregrado</span>
-                            </td>
-                            <td class="px-6 py-4">
-                                <span class="text-sm font-medium text-slate-600 dark:text-slate-300">Ingeniería Industrial</span>
-                            </td>
-                            <td class="px-6 py-4">
-                                <div class="flex items-center gap-2">
-                                    <span class="size-2 rounded-full bg-blue-500"></span>
-                                    <span class="text-sm text-slate-600 dark:text-slate-400">UNMSM</span>
-                                </div>
-                            </td>
-                            <td class="px-6 py-4 text-center">
-                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-600 dark:bg-amber-500/10 dark:text-amber-500 uppercase">
-                                    Pendiente
-                                </span>
-                            </td>
-                            <td class="px-6 py-4">
-                                <div class="flex items-center gap-2 text-sm text-slate-500">
-                                    <span class="material-symbols-outlined text-[18px]">calendar_today</span>
-                                    <span>25 May 2024</span>
-                                </div>
-                            </td>
-                            <td class="px-6 py-4 text-right">
-                                <div class="flex justify-end gap-1">
-                                    <button class="p-2 rounded-lg hover:bg-primary/10 text-slate-500 hover:text-primary transition-colors" title="Editar">
-                                        <span class="material-symbols-outlined text-[20px]">edit</span>
-                                    </button>
-                                    <button class="p-2 rounded-lg hover:bg-emerald-500/10 text-slate-500 hover:text-emerald-500 transition-colors" title="WhatsApp">
-                                        <span class="material-symbols-outlined text-[20px]">chat</span>
-                                    </button>
-                                    <button class="p-2 rounded-lg hover:bg-red-500/10 text-slate-500 hover:text-red-500 transition-colors" title="Eliminar">
-                                        <span class="material-symbols-outlined text-[20px]">delete</span>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-
-                        <!-- Prospect 2 -->
-                        <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
-                            <td class="px-6 py-4">
-                                <div class="flex items-center gap-3">
-                                    <div class="size-9 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500 font-bold text-xs">LC</div>
-                                    <div class="flex flex-col">
-                                        <span class="text-sm font-bold text-slate-900 dark:text-white">Lucía Carrera</span>
-                                        <span class="text-[11px] text-slate-500">lucia.c@email.com</span>
-                                    </div>
-                                </div>
-                            </td>
-                            <td class="px-6 py-4 text-center">
-                                <span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-400">Postgrado</span>
-                            </td>
-                            <td class="px-6 py-4">
-                                <span class="text-sm font-medium text-slate-600 dark:text-slate-300">Maestría en Finanzas</span>
-                            </td>
-                            <td class="px-6 py-4">
-                                <div class="flex items-center gap-2">
-                                    <span class="size-2 rounded-full bg-red-500"></span>
-                                    <span class="text-sm text-slate-600 dark:text-slate-400">PUCP</span>
-                                </div>
-                            </td>
-                            <td class="px-6 py-4 text-center">
-                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-500 uppercase">
-                                    Interesado
-                                </span>
-                            </td>
-                            <td class="px-6 py-4">
-                                <div class="flex items-center gap-2 text-sm text-slate-500">
-                                    <span class="material-symbols-outlined text-[18px]">calendar_today</span>
-                                    <span>02 Jun 2024</span>
-                                </div>
-                            </td>
-                            <td class="px-6 py-4 text-right">
-                                <div class="flex justify-end gap-1">
-                                    <button class="p-2 rounded-lg hover:bg-primary/10 text-slate-500 hover:text-primary transition-colors" title="Editar">
-                                        <span class="material-symbols-outlined text-[20px]">edit</span>
-                                    </button>
-                                    <button class="p-2 rounded-lg hover:bg-emerald-500/10 text-slate-500 hover:text-emerald-500 transition-colors" title="WhatsApp">
-                                        <span class="material-symbols-outlined text-[20px]">chat</span>
-                                    </button>
-                                    <button class="p-2 rounded-lg hover:bg-red-500/10 text-slate-500 hover:text-red-500 transition-colors" title="Eliminar">
-                                        <span class="material-symbols-outlined text-[20px]">delete</span>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-
-                        <!-- Prospect 3 -->
-                        <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
-                            <td class="px-6 py-4">
-                                <div class="flex items-center gap-3">
-                                    <div class="size-9 rounded-full bg-violet-500/10 flex items-center justify-center text-violet-500 font-bold text-xs">RP</div>
-                                    <div class="flex flex-col">
-                                        <span class="text-sm font-bold text-slate-900 dark:text-white">Ricardo Palma</span>
-                                        <span class="text-[11px] text-slate-500">+51 912 333 444</span>
-                                    </div>
-                                </div>
-                            </td>
-                            <td class="px-6 py-4 text-center">
-                                <span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-400">Doctorado</span>
-                            </td>
-                            <td class="px-6 py-4">
-                                <span class="text-sm font-medium text-slate-600 dark:text-slate-300">Ciencias Sociales</span>
-                            </td>
-                            <td class="px-6 py-4">
-                                <div class="flex items-center gap-2">
-                                    <span class="size-2 rounded-full bg-amber-500"></span>
-                                    <span class="text-sm text-slate-600 dark:text-slate-400">UPC</span>
-                                </div>
-                            </td>
-                            <td class="px-6 py-4 text-center">
-                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-600 dark:bg-blue-500/10 dark:text-blue-500 uppercase">
-                                    Cotizado
-                                </span>
-                            </td>
-                            <td class="px-6 py-4">
-                                <div class="flex items-center gap-2 text-sm text-slate-500">
-                                    <span class="material-symbols-outlined text-[18px]">calendar_today</span>
-                                    <span>15 Jun 2024</span>
-                                </div>
-                            </td>
-                            <td class="px-6 py-4 text-right">
-                                <div class="flex justify-end gap-1">
-                                    <button class="p-2 rounded-lg hover:bg-primary/10 text-slate-500 hover:text-primary transition-colors" title="Editar">
-                                        <span class="material-symbols-outlined text-[20px]">edit</span>
-                                    </button>
-                                    <button class="p-2 rounded-lg hover:bg-emerald-500/10 text-slate-500 hover:text-emerald-500 transition-colors" title="WhatsApp">
-                                        <span class="material-symbols-outlined text-[20px]">chat</span>
-                                    </button>
-                                    <button class="p-2 rounded-lg hover:bg-red-500/10 text-slate-500 hover:text-red-500 transition-colors" title="Eliminar">
-                                        <span class="material-symbols-outlined text-[20px]">delete</span>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
+                    <tbody id="tablaProspectos" class="divide-y divide-slate-100 dark:divide-border-dark">
+                        <!-- Filas insertadas por JS -->
                     </tbody>
                 </table>
             </div>
 
-            <!-- Pagination Section -->
-            <div class="px-6 py-4 border-t border-slate-100 dark:border-border-dark flex items-center justify-between bg-slate-50/10 dark:bg-slate-800/10">
-                <span class="text-xs font-semibold text-slate-500">Mostrando 3 de 128 prospectos</span>
-                <div class="flex items-center gap-1">
-                    <button class="size-9 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-primary transition-all">
-                        <span class="material-symbols-outlined text-[20px]">chevron_left</span>
-                    </button>
-                    <button class="size-9 rounded-xl flex items-center justify-center bg-primary text-white text-xs font-bold shadow-md shadow-primary/20">1</button>
-                    <button class="size-9 rounded-xl flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all text-xs font-bold">2</button>
-                    <button class="size-9 rounded-xl flex items-center justify-center text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all text-xs font-bold">3</button>
-                    <button class="size-9 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-primary transition-all">
-                        <span class="material-symbols-outlined text-[20px]">chevron_right</span>
-                    </button>
-                </div>
-            </div>
         </div>
     </div>
 </div>
@@ -240,8 +60,9 @@
                         <span class="material-symbols-outlined">person_add</span>
                     </div>
                     <div>
-                        <h3 class="text-lg font-bold text-slate-900 dark:text-white leading-none">Registrar Nuevo Prospecto</h3>
+                        <h3 id="modalTitle" class="text-lg font-bold text-slate-900 dark:text-white leading-none">Registrar Nuevo Prospecto</h3>
                         <p class="text-[13px] text-slate-500 mt-1">Complete los campos obligatorios</p>
+
                     </div>
                 </div>
                 <button type="button" onclick="closeModal('modalNuevoProspecto')" class="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 transition-colors">
@@ -349,7 +170,7 @@
                                         <input name="apellidos[]" placeholder="Apellidos" class="w-full bg-white dark:bg-background-dark border-none rounded-lg px-3 py-2.5 text-sm focus:ring-1 focus:ring-primary shadow-sm" type="text" />
                                     </div>
                                     <div class="md:col-span-4 leading-none">
-                                        <input name="celular[]" placeholder="Celular" class="w-full bg-white dark:bg-background-dark border-none rounded-lg px-3 py-2.5 text-sm focus:ring-1 focus:ring-primary shadow-sm" type="text" />
+                                        <input name="celular[]" placeholder="Celular" class="w-full bg-white dark:bg-background-dark border-none rounded-lg px-3 py-2.5 text-sm focus:ring-1 focus:ring-primary shadow-sm" type="text" required />
                                     </div>
                                 </div>
                             </div>
@@ -366,7 +187,7 @@
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-[13px] font-bold text-slate-700 dark:text-slate-300 mb-1 ml-1">Asignar Roles</label>
-                                <select id="rol_asignado" name="rol_asignado" class="w-full bg-slate-50 dark:bg-background-dark border border-slate-200 dark:border-border-dark rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary outline-none transition-all appearance-none cursor-pointer">
+                                <select id="rol_asignado" name="rol_asignado" class="w-full bg-slate-50 dark:bg-background-dark border border-slate-200 dark:border-border-dark rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary outline-none transition-all appearance-none cursor-pointer" required>
                                     <option value="">Seleccione rol...</option>
                                 </select>
                             </div>
@@ -383,7 +204,7 @@
                                         <span class="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm">search</span>
                                         <input type="text" id="taskSearchInput" placeholder="Buscar tarea..."
                                             class="w-full bg-slate-50 dark:bg-background-dark border border-slate-200 dark:border-border-dark rounded-xl pl-9 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-primary outline-none transition-all"
-                                            autocomplete="off">
+                                            autocomplete="off" required>
 
                                         <!-- Resultados de búsqueda -->
                                         <div id="taskResults" class="hidden absolute top-full left-0 right-0 mt-1 bg-white dark:bg-neutral-dark border border-slate-200 dark:border-border-dark rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto custom-scrollbar">
@@ -401,7 +222,7 @@
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-[13px] font-bold text-slate-700 dark:text-slate-300 mb-1 ml-1">Personal Responsable</label>
-                                <select id="personal_responsable" name="personal" class="w-full bg-slate-50 dark:bg-background-dark border border-slate-200 dark:border-border-dark rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary outline-none transition-all appearance-none cursor-pointer">
+                                <select id="personal_responsable" name="personal" class="w-full bg-slate-50 dark:bg-background-dark border border-slate-200 dark:border-border-dark rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary outline-none transition-all appearance-none cursor-pointer" required>
                                     <option value="">Asignar personal...</option>
                                 </select>
                             </div>
@@ -412,6 +233,30 @@
                                     <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">link</span>
                                     <input placeholder="https://drive.google.com/..." name="linkDrive" class="w-full bg-slate-50 dark:bg-background-dark border border-slate-200 dark:border-border-dark rounded-xl pl-10 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-primary outline-none transition-all" type="text" />
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- Opciones de horario manual -->
+                        <div id="contenedorHorarioManual" class="grid grid-cols-1 md:grid-cols-2 gap-4 hidden bg-amber-50 dark:bg-amber-900/20 p-4 rounded-xl border border-amber-200 dark:border-amber-700/50">
+                            <div>
+                                <label class="block text-[13px] font-bold text-amber-900 dark:text-amber-200 mb-1 ml-1">Fecha de Inicio Manual</label>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-amber-500 text-sm">event</span>
+                                    <input type="date" id="fecha_inicio_manual" name="fecha_inicio_manual" min="<?= date('Y-m-d') ?>" class="w-full bg-white dark:bg-background-dark border border-amber-200 dark:border-amber-700/50 rounded-xl pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all" />
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[13px] font-bold text-amber-900 dark:text-amber-200 mb-1 ml-1">Hora de Inicio Manual</label>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-amber-500 text-sm">schedule</span>
+                                    <input type="time" id="hora_inicio_manual" name="hora_inicio_manual" class="w-full bg-white dark:bg-background-dark border border-amber-200 dark:border-amber-700/50 rounded-xl pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-amber-500 outline-none transition-all" />
+                                </div>
+                            </div>
+                            <div class="md:col-span-2">
+                                <p class="text-[12px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                                    <span class="material-symbols-outlined text-[14px]">warning</span>
+                                    El personal seleccionado no tiene un horario registrado. Por favor, asigne manualmente cuándo iniciará la tarea.
+                                </p>
                             </div>
                         </div>
 
@@ -473,6 +318,7 @@
 
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+<link href="https://cdn.datatables.net/2.0.8/css/dataTables.dataTables.min.css" rel="stylesheet">
 <style>
     /* Estilos personalizados para Quill en modo oscuro */
     .ql-toolbar.ql-snow {
@@ -577,16 +423,166 @@
     .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
         background: #475569;
     }
+
+    /* ── DataTables overrides ── */
+    div.dataTables_wrapper {
+        font-family: inherit;
+    }
+
+    div.dataTables_length label,
+    div.dataTables_filter label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #64748b;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    div.dataTables_length select,
+    div.dataTables_filter input {
+        border: 1px solid #e2e8f0;
+        border-radius: 0.75rem;
+        outline: none;
+        background: #fff;
+        color: #0f172a;
+        transition: all .2s;
+    }
+
+    div.dataTables_length select {
+        padding: 0.375rem 0.75rem;
+        font-size: 0.8125rem;
+    }
+
+    /* Input de buscador estilizado con icono integrado */
+    div.dataTables_filter input {
+        padding: 0.5rem 1rem 0.5rem 2.5rem;
+        font-size: 0.875rem;
+        width: 260px;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: 0.85rem center;
+        background-size: 1.15rem;
+    }
+
+    div.dataTables_length select:focus {
+        box-shadow: 0 0 0 3px rgba(19, 91, 236, .15);
+        border-color: #135bec;
+    }
+
+    div.dataTables_filter input:focus {
+        box-shadow: 0 0 0 3px rgba(19, 91, 236, .15);
+        border-color: #135bec;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23135bec' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+    }
+
+    .dark div.dataTables_length select {
+        background: #0f172a;
+        border-color: #334155;
+        color: #f1f5f9;
+    }
+
+    .dark div.dataTables_filter input {
+        background-color: #0f172a;
+        border-color: #334155;
+        color: #f1f5f9;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+    }
+
+    .dark div.dataTables_filter input:focus {
+        border-color: #3b82f6;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233b82f6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+    }
+
+    div.dataTables_info {
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: #64748b;
+        padding-top: 0.5rem;
+    }
+
+    /* Paginación DataTables */
+    div.dataTables_paginate {
+        margin-top: 0.25rem;
+    }
+
+    div.dataTables_paginate .paginate_button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 2.25rem;
+        height: 2.25rem;
+        border-radius: 0.75rem;
+        font-size: 0.75rem;
+        font-weight: 700;
+        border: none !important;
+        background: transparent !important;
+        color: #64748b !important;
+        cursor: pointer;
+        transition: background .15s, color .15s;
+        box-shadow: none !important;
+    }
+
+    div.dataTables_paginate .paginate_button:hover {
+        background: #f1f5f9 !important;
+        color: #135bec !important;
+    }
+
+    div.dataTables_paginate .paginate_button.current,
+    div.dataTables_paginate .paginate_button.current:hover {
+        background: #135bec !important;
+        color: #fff !important;
+        box-shadow: 0 4px 12px rgba(19, 91, 236, .25) !important;
+        border-radius: 0.75rem;
+    }
+
+    div.dataTables_paginate .paginate_button.disabled,
+    div.dataTables_paginate .paginate_button.disabled:hover {
+        opacity: .35;
+        cursor: not-allowed;
+        color: #94a3b8 !important;
+        background: transparent !important;
+    }
+
+    div.dataTables_paginate .paginate_button.previous,
+    div.dataTables_paginate .paginate_button.next {
+        font-size: 1rem;
+    }
+
+    .dark div.dataTables_paginate .paginate_button:hover {
+        background: #1e293b !important;
+    }
+
+    /* Wrapper superior e inferior */
+    div.dataTables_wrapper div.dataTables_length,
+    div.dataTables_wrapper div.dataTables_filter {
+        padding: 1rem 1.25rem 0.5rem;
+    }
+
+    div.dataTables_wrapper div.dataTables_info,
+    div.dataTables_wrapper div.dataTables_paginate {
+        padding: 0.75rem 1.25rem 1rem;
+    }
+
+    div.dataTables_wrapper div.dataTables_filter {
+        text-align: right;
+    }
 </style>
 
 <?= $this->endSection() ?>
 
 <?= $this->section('js') ?>
+<!-- jQuery (requerido por DataTables) -->
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<!-- DataTables JS -->
+<script src="https://cdn.datatables.net/2.0.8/js/dataTables.min.js"></script>
+<!-- Quill -->
 <script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
 <script>
-    // IMPORTANTE: Definir Quill en el objeto global ANTES del plugin
     window.Quill = Quill;
 </script>
 <script src="https://unpkg.com/quill-image-resize-module@3.0.0/image-resize.min.js"></script>
+<!-- SweetAlert2 -->
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <script src="<?= base_url('js/clientes/potenciales.js') ?>"></script>
 <?= $this->endSection() ?>

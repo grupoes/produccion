@@ -53,6 +53,9 @@ class Clientes extends BaseController
         $contenido = $this->request->getPost('contenido');
         $linkDrive = $this->request->getPost('linkDrive');
         $prioridad = $this->request->getPost('prioridad');
+        $personal = $this->request->getPost('personal');
+        $fecha_inicio_manual = $this->request->getPost('fecha_inicio_manual') ?: '';
+        $hora_inicio_manual  = $this->request->getPost('hora_inicio_manual') ?: '';
 
         $usuario_id = session()->get('id_user');
 
@@ -79,7 +82,10 @@ class Clientes extends BaseController
                 'celular' => $celular,
                 'contenido' => $contenido,
                 'linkDrive' => $linkDrive,
-                'prioridad' => $prioridad
+                'prioridad' => $prioridad,
+                'responsable_id' => $personal,
+                'fecha_inicio_manual' => $fecha_inicio_manual,
+                'hora_inicio_manual' => $hora_inicio_manual
             ]
         ]);
 
@@ -98,6 +104,64 @@ class Clientes extends BaseController
                 'status' => 'error',
                 'message' => $data['messages'],
                 'result' => $data['result']
+            ]);
+        }
+
+        return $this->response->setJSON([
+            'status' => 'success',
+            'message' => $data['message'],
+            'result' => $data['result']
+        ]);
+    }
+
+    public function getProspectos()
+    {
+        $ruta = getenv('URL_BACKEND') . 'prospectos';
+
+        $client = \Config\Services::curlrequest();
+
+        $response = $client->get($ruta, [
+            'headers' => [
+                'Accept' => 'application/json'
+            ],
+            'http_errors' => false
+        ]);
+
+        $data = json_decode($response->getBody(), true);
+
+        if (!$data || $data['status'] == 500 || $data['status'] == 400) {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => $data['messages']['error']
+            ]);
+        }
+
+        return $this->response->setJSON([
+            'status' => 'success',
+            'message' => $data['message'],
+            'result' => $data['result']
+        ]);
+    }
+
+    public function getProspecto($id)
+    {
+        $ruta = getenv('URL_BACKEND') . 'prospecto/get-row/' . $id;
+
+        $client = \Config\Services::curlrequest();
+
+        $response = $client->get($ruta, [
+            'headers' => [
+                'Accept' => 'application/json'
+            ],
+            'http_errors' => false
+        ]);
+
+        $data = json_decode($response->getBody(), true);
+
+        if (!$data || $data['status'] == 500 || $data['status'] == 400) {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => $data['messages']['error']
             ]);
         }
 

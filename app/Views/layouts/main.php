@@ -156,7 +156,7 @@
                 <div class="bg-primary p-2 rounded-lg shrink-0">
                     <span class="material-symbols-outlined text-white">factory</span>
                 </div>
-                <h1 class="text-xl font-bold tracking-tight logo-text">ProAdmin</h1>
+                <h1 class="text-xl font-bold tracking-tight logo-text">Grupo ES</h1>
             </div>
             <nav class="flex-1 px-4 space-y-2 py-4 overflow-y-auto custom-scrollbar">
                 <?= $this->include('layouts/menu') ?>
