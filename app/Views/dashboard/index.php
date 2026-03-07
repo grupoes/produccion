@@ -257,7 +257,7 @@
             <span class="text-primary text-sm font-semibold mb-1 uppercase tracking-wider">Entregas
                 Hoy</span>
             <div class="flex items-end justify-between">
-                <h3 class="text-3xl font-bold">42</h3>
+                <h3 class="text-3xl font-bold">0</h3>
                 <span class="text-emerald-500 text-sm font-medium flex items-center">
                     <span class="material-symbols-outlined text-sm mr-1">trending_up</span> +5%
                 </span>
@@ -267,9 +267,9 @@
             <span class="text-primary text-sm font-semibold mb-1 uppercase tracking-wider">Pendientes
                 Hoy</span>
             <div class="flex items-end justify-between">
-                <h3 class="text-3xl font-bold">12</h3>
+                <h3 class="text-3xl font-bold">0</h3>
                 <span class="text-orange-500 text-sm font-medium flex items-center">
-                    <span class="material-symbols-outlined text-sm mr-1">trending_down</span> -2%
+                    <span class="material-symbols-outlined text-sm mr-1">trending_down</span> -0%
                 </span>
             </div>
         </div>
@@ -277,9 +277,9 @@
             <span class="text-primary text-sm font-semibold mb-1 uppercase tracking-wider">Entrega
                 Semanal</span>
             <div class="flex items-end justify-between">
-                <h3 class="text-3xl font-bold">285</h3>
+                <h3 class="text-3xl font-bold">0</h3>
                 <span class="text-emerald-500 text-sm font-medium flex items-center">
-                    <span class="material-symbols-outlined text-sm mr-1">trending_up</span> +12%
+                    <span class="material-symbols-outlined text-sm mr-1">trending_up</span> +0%
                 </span>
             </div>
         </div>
@@ -287,9 +287,9 @@
             <span class="text-primary text-sm font-semibold mb-1 uppercase tracking-wider">Pendientes
                 Semanal</span>
             <div class="flex items-end justify-between">
-                <h3 class="text-3xl font-bold">34</h3>
+                <h3 class="text-3xl font-bold">0</h3>
                 <span class="text-orange-500 text-sm font-medium flex items-center">
-                    <span class="material-symbols-outlined text-sm mr-1">trending_down</span> -8%
+                    <span class="material-symbols-outlined text-sm mr-1">trending_down</span> -0%
                 </span>
             </div>
         </div>
