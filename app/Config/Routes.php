@@ -48,8 +48,16 @@ $routes->get('actividades', 'Actividades::getActividades');
 $routes->get('getActividadRow/(:num)', 'Actividades::getActividadRow/$1');
 $routes->post('update-link-drive', 'Actividades::updateLinkDrive');
 $routes->post('getEstadosActividades', 'Actividades::getEstadosActividades');
+$routes->get('get-ultimo-horario/(:num)', 'Actividades::traer_ultimo_horario_usuario/$1');
 
 $routes->post('update-estado-tarea', 'Actividades::updateEstadoTarea');
 
 $routes->get('horario/get-by-id/(:num)', 'Horario::getHorarioById/$1');
 $routes->get('horario/get-usuario', 'Horario::getHorarioUsuario');
+
+$routes->get('usuarios', 'Usuario::index');
+$routes->get('consulta-dni/(:any)/(:any)', 'Usuario::api_dni_ruc/$1/$2');
+$routes->post('save-user', 'Usuario::create');
+$routes->get('usuarios/get-all', 'Usuario::getUsers');
+$routes->get('usuario/get-row/(:num)', 'Usuario::getUser/$1');
+$routes->get('usuario/delete/(:num)', 'Usuario::delete/$1');

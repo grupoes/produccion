@@ -110,7 +110,7 @@ class Horario extends BaseController
 
     public function getHorarioUsuario()
     {
-        $usuarioId = session()->get('id_user');
+        $usuarioId = $this->request->getGet('id_user') ?: session()->get('id_user');
 
         $ruta = getenv('URL_BACKEND') . 'horario/get-usuario/' . $usuarioId;
 

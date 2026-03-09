@@ -22,11 +22,13 @@
             <button type="button"
                 class="flex items-center gap-3 p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200"
                 id="userDropdownButton">
-                <div class="flex flex-col items-end mr-1 lg:block hidden">
-                    <span class="text-sm font-bold text-slate-900 dark:text-white leading-tight">Carlos
-                        Admin</span>
-                    <span
-                        class="text-[10px] text-slate-500 font-medium lowercase first-letter:uppercase">Administrador</span>
+                <div class="hidden lg:flex flex-col items-end mr-1">
+                    <span class="text-sm font-bold text-slate-900 dark:text-white leading-tight">
+                        <?= session()->get('nombres') ?> <?= session()->get('apellidos') ?>
+                    </span>
+                    <span class="text-[10px] text-slate-500 font-medium lowercase first-letter:uppercase">
+                        <?= session()->get('rol') ?>
+                    </span>
                 </div>
                 <div
                     class="size-10 rounded-full bg-primary/10 flex items-center justify-center text-primary overflow-hidden border-2 border-primary/20 shadow-inner">

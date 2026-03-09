@@ -254,17 +254,30 @@ document.addEventListener('DOMContentLoaded', () => {
         const hoy = new Date();
         const strHoy = hoy.toISOString().split('T')[0];
 
-        // Fecha de hace 8 días
-        const hace8Dias = new Date(hoy);
-        hace8Dias.setDate(hoy.getDate() - 8);
-        const strHace8Dias = hace8Dias.toISOString().split('T')[0];
+        if (typeof USER_ROL_ID !== 'undefined' && (USER_ROL_ID == 1 || USER_ROL_ID == 2)) {
+            // Admin/Super: Hace 8 días a hoy
+            const hace8Dias = new Date(hoy);
+            hace8Dias.setDate(hoy.getDate() - 8);
+            const strHace8Dias = hace8Dias.toISOString().split('T')[0];
 
-        // Setear valores por defecto
-        fechaInicio.value = strHace8Dias;
-        fechaFin.value = strHoy;
+            fechaInicio.value = strHace8Dias;
+            fechaFin.value = strHoy;
+        } else {
+            // Auxiliar: Hoy a Hoy, con limitación de max
+            fechaInicio.value = strHoy;
+            fechaFin.value = strHoy;
+            fechaFin.setAttribute('max', strHoy);
+        }
 
         // Cargar por primera vez
         cargarDashboardCompleto();
+    }
+
+    // Cargar auxiliares si el select existe (rol 1 o 2)
+    const selectAuxiliar = document.getElementById('filtroAuxiliar');
+    if (selectAuxiliar) {
+        cargarAuxiliares();
+        selectAuxiliar.addEventListener('change', cargarDashboardCompleto);
     }
 
     const btnFiltrar = document.getElementById('btnFiltrarDashboard');
@@ -326,6 +339,8 @@ function initCalendar() {
         return;
     }
 
+    const isAdmin = (typeof USER_ROL_ID !== 'undefined' && (USER_ROL_ID == 1 || USER_ROL_ID == 2));
+
     calendarInstance = new FullCalendar.Calendar(calendarEl, {
         initialView: 'timeGridWeek',
         firstDay: 1, // Lunes
@@ -344,13 +359,23 @@ function initCalendar() {
         slotMinTime: '08:00:00',
         slotMaxTime: '19:00:00',
         allDaySlot: false,
+        displayEventTime: (typeof USER_ROL_ID !== 'undefined' && (USER_ROL_ID == 1 || USER_ROL_ID == 2)),
         events: async function (info, successCallback, failureCallback) {
             try {
-                const resp = await fetch('horario/get-usuario');
+                const fAuxiliar = document.getElementById('filtroAuxiliar')?.value || '';
+                const url = fAuxiliar ? `horario/get-usuario?id_user=${fAuxiliar}` : 'horario/get-usuario';
+                const resp = await fetch(url);
                 const data = await resp.json();
 
                 if (data.status === 'success' || data.status === 200) {
-                    const results = data.result || [];
+                    let results = data.result || [];
+                    
+                    if (!isAdmin) {
+                        const now = new Date();
+                        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                        results = results.filter(act => act.start && act.start.startsWith(todayStr));
+                    }
+
                     const events = results.map(act => {
                         return {
                             id: act.actividad_id || act.id,
@@ -399,12 +424,14 @@ async function cargarColumna(estado, containerId) {
 
     const fInicio = document.getElementById('filtroFechaInicio').value;
     const fFin = document.getElementById('filtroFechaFin').value;
+    const fAuxiliar = document.getElementById('filtroAuxiliar')?.value || '';
 
     try {
         const formData = new FormData();
         formData.append('fecha_inicio', fInicio);
         formData.append('fecha_fin', fFin);
         formData.append('estado_progreso', estado);
+        if (fAuxiliar) formData.append('id_user', fAuxiliar);
 
         const resp = await fetch('getEstadosActividades', {
             method: 'POST',
@@ -420,11 +447,8 @@ async function cargarColumna(estado, containerId) {
                 html = '<div class="text-center text-xs text-slate-400 py-8 border border-dashed border-slate-200 dark:border-slate-700/50 rounded-lg">Nada por aquí</div>';
             } else {
                 data.result.forEach(act => {
-                    const prioridadText = act.prioridad == '1' ? 'Alta' : (act.prioridad == '3' ? 'Baja' : 'Media');
-                    const colorBadge = act.prioridad == '1' ? 'bg-red-500/10 text-red-500' : (act.prioridad == '3' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-blue-500/10 text-blue-500');
-                    const nombreUsuario = act.nombres && act.apellidos ? `${act.nombres} ${act.apellidos}` : 'Sin asignar';
-                    const nombreTarea = act.nombre || 'Actividad sin nombre';
-
+                    const prioridadText = act.prioridad == '3' ? 'Alta' : (act.prioridad == '1' ? 'Baja' : 'Media');
+                    const esFinalizado = estado === 'Finalizado';
                     let fechaTxt = '-';
                     let tooltipFecha = 'Fecha';
 
@@ -436,20 +460,62 @@ async function cargarColumna(estado, containerId) {
                         fechaTxt = act.fecha_contacto ? formatFecha(act.fecha_contacto) : '-';
                     }
 
-                    const esFinalizado = estado === 'Finalizado';
+                    // Color mapping based on priority
+                    let cardBgClass = '';
+                    let textClass = 'text-white';
+                    let badgeBgClass = 'bg-white/20';
+                    let shadowClass = '';
+
+                    if (act.prioridad == '3') { // Alta
+                        cardBgClass = 'bg-danger';
+                        shadowClass = 'shadow-danger/20';
+                    } else if (act.prioridad == '1') { // Baja
+                        cardBgClass = 'bg-success';
+                        shadowClass = 'shadow-success/20';
+                    } else { // Media
+                        cardBgClass = 'bg-warning';
+                        textClass = 'text-slate-900';
+                        badgeBgClass = 'bg-black/10';
+                        shadowClass = 'shadow-warning/20';
+                    }
+
+                    const nombreTarea = act.nombre || 'Actividad sin nombre';
+                    const nombreUsuario = act.nombres && act.apellidos ? `${act.nombres} ${act.apellidos}` : 'Sin asignar';
+
                     html += `
-                        <div ${esFinalizado ? '' : 'draggable="true"'} data-estado="${estado}" data-id="${act.id}" class="kanban-card bg-white dark:bg-background-dark/60 p-4 rounded-lg border border-primary/10 shadow-sm hover:border-primary/40 transition-all ${esFinalizado ? '' : 'cursor-grab active:cursor-grabbing'} relative">
-                            <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded ${colorBadge} mb-2 inline-block">${prioridadText}</span>
-                            <h4 class="font-semibold text-sm mb-1 line-clamp-2" title="${nombreTarea}">${nombreTarea}</h4>
-                            <div class="text-[11px] text-slate-500 mb-3">
-                                <span class="block mb-0.5">Asignado por:</span>
-                                <span class="block text-xs font-semibold text-slate-700 dark:text-slate-300 truncate" title="${nombreUsuario}">${nombreUsuario}</span>
+                        <div ${esFinalizado ? '' : 'draggable="true"'} data-estado="${estado}" data-id="${act.id}" 
+                             class="kanban-card ${cardBgClass} p-4 rounded-2xl shadow-lg ${shadowClass} transition-all duration-300 ${esFinalizado ? 'opacity-80 saturate-[0.7]' : 'hover:-translate-y-1 cursor-grab active:cursor-grabbing'} relative overflow-hidden group">
+                            
+                            <!-- Deco background -->
+                            <div class="absolute -right-6 -bottom-6 size-24 bg-white/10 rounded-full blur-2xl"></div>
+
+                            <div class="flex items-center justify-between mb-3 relative z-10">
+                                <span class="text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${badgeBgClass} ${textClass} border border-white/10 backdrop-blur-sm tracking-widest">
+                                    ${prioridadText}
+                                </span>
+                                ${act.prioridad == '1' ? '<span class="size-1.5 rounded-full bg-white animate-pulse"></span>' : ''}
                             </div>
-                            <div class="flex justify-between items-center text-xs text-slate-400 mt-2 border-t border-slate-100 dark:border-slate-800 pt-2">
-                                <span class="flex items-center gap-1" title="${tooltipFecha}"><span class="material-symbols-outlined text-xs">calendar_today</span> <span class="truncate">${fechaTxt}</span></span>
-                                <button type="button" onclick="verDetalleActividad('${act.id}')" class="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-slate-400 hover:text-primary dark:hover:text-primary" title="Ver Detalles">
-                                    <span class="material-symbols-outlined text-sm">visibility</span>
-                                </button>
+
+                            <h4 class="font-black ${textClass} text-sm mb-2 line-clamp-2 leading-tight relative z-10" title="${nombreTarea}">
+                                ${nombreTarea}
+                            </h4>
+
+                            <div class="space-y-1 mb-4 relative z-10">
+                                <p class="${textClass} opacity-70 text-[10px] uppercase font-bold tracking-tighter">Asignado por:</p>
+                                <p class="${textClass} text-[11px] font-bold truncate">${nombreUsuario}</p>
+                            </div>
+
+                            <div class="flex justify-between items-center text-[10px] ${textClass} mt-auto pt-3 border-t border-white/10 relative z-10">
+                                <span class="flex items-center gap-1 font-bold opacity-80" title="${tooltipFecha}">
+                                    <span class="material-symbols-outlined text-[14px]">calendar_today</span> 
+                                    <span>${fechaTxt.split(' ')[0]}</span>
+                                </span>
+                                <div class="flex gap-1">
+                                    <button type="button" onclick="verDetalleActividad('${act.id}')" 
+                                            class="p-1.5 rounded-lg bg-white/20 hover:bg-white/40 transition-colors ${textClass}" title="Ver Detalles">
+                                        <span class="material-symbols-outlined text-[16px]">visibility</span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     `;
@@ -478,7 +544,6 @@ async function verDetalleActividad(id) {
     const modalId = 'modalDetalleActividad';
     if (typeof openModal === 'function') openModal(modalId);
 
-    // Mostramos Loader, ocultamos contenido
     const loader = document.getElementById('detalleLoader');
     const contenido = document.getElementById('detalleContenido');
     if (loader) loader.classList.remove('hidden');
@@ -489,74 +554,130 @@ async function verDetalleActividad(id) {
         const data = await res.json();
 
         if (data.status === 'success' && data.result) {
-            // El API debería devolver info en data.result o data.result[0] u objeto similar
-            const det = Array.isArray(data.result) ? data.result[0] : (data.result.prospecto || data.result);
+            const det = data.result;
 
-            if (!det) throw new Error("Datos no encontrados");
+            // Rellenar IDs ocultos
+            document.getElementById('detActividadId').value = det.id;
+            document.getElementById('detProspectoId').value = det.prospecto_id;
 
-            // Rellenar Datos
-            const pNombre = det.nombre || det.tarea_nombre || 'Actividad Sin Nombre';
-            const detEstado = det.estado_progreso || 'Desconocido';
-
-            // Prioridad
+            // Datos Principales
+            document.getElementById('detNombre').textContent = det.tarea || 'Sin Título';
+            document.getElementById('detEstado').textContent = det.estado_progreso;
+            
+            // Prioridad Logic
             let pColor = '';
             let pText = '';
-            if (det.prioridad == '1') { pText = 'Alta'; pColor = 'bg-red-500/10 text-red-500'; }
-            else if (det.prioridad == '3') { pText = 'Baja'; pColor = 'bg-emerald-500/10 text-emerald-500'; }
-            else { pText = 'Media'; pColor = 'bg-blue-500/10 text-blue-500'; }
+            // 1=Baja, 2=Media, 3=Alta
+            if (det.prioridad == '3') { 
+                pText = 'Alta'; 
+                pColor = 'bg-danger text-white border-danger/50 shadow-danger/20'; 
+            } else if (det.prioridad == '1') { 
+                pText = 'Baja'; 
+                pColor = 'bg-success text-white border-success/50 shadow-success/20'; 
+            } else { 
+                pText = 'Media'; 
+                pColor = 'bg-warning text-slate-900 border-warning/50 shadow-warning/20'; 
+            }
+            
+            const elPrioridad = document.getElementById('detPrioridad');
+            elPrioridad.textContent = pText;
+            elPrioridad.className = `px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider border shadow-sm ${pColor}`;
 
-            // Responsable
-            let responsable = 'Sin asignar';
-            if (det.nombres || det.apellidos) {
-                responsable = `${det.nombres || ''} ${det.apellidos || ''}`.trim();
+            // Responsable y Prospecto
+            const nombreProspecto = `${det.nombres || ''} ${det.apellidos || ''}`.trim();
+            document.getElementById('detResponsable').textContent = 'Responsable Asignado'; 
+            document.getElementById('detProspectoInfo').textContent = `${det.estado_cliente} - ${nombreProspecto}`;
+            document.getElementById('detOrigen').textContent = det.origen || 'No especificado';
+            document.getElementById('detFechaInicio').textContent = det.fecha_contacto ? formatFecha(det.fecha_contacto) : '-';
+            
+            // Nuevos Campos
+            document.getElementById('detFechaEntrega').textContent = det.fecha_entrega ? formatFecha(det.fecha_entrega) : 'Sin fecha pactada';
+            document.getElementById('detNivel').textContent = det.nivel_academico || 'No especificado';
+            document.getElementById('detInstitucion').textContent = det.institucion || 'No especificada';
+            document.getElementById('detCarrera').textContent = det.carrera || 'No especificada';
+            document.getElementById('detContenido').textContent = det.contenido || 'Sin observaciones adicionales.';
+
+            // Link Drive
+            document.getElementById('detLinkDrive').value = det.link_drive || '';
+
+            // Render Contacts List
+            const contactsContainer = document.getElementById('detContactosList');
+            contactsContainer.innerHTML = '';
+            if (Array.isArray(det.contactos) && det.contactos.length > 0) {
+                det.contactos.forEach(c => {
+                    contactsContainer.innerHTML += `
+                        <div class="flex items-center gap-3 p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                            <div class="size-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400">
+                                <span class="material-symbols-outlined text-sm">person</span>
+                            </div>
+                            <div class="min-w-0">
+                                <p class="text-xs font-bold text-slate-900 dark:text-white truncate">${c.nombres} ${c.apellidos || ''}</p>
+                                <p class="text-[10px] text-slate-500 font-medium">${c.celular || 'Sin celular'}</p>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                contactsContainer.innerHTML = '<p class="text-[10px] text-slate-400 italic px-1">No hay contactos adicionales vinculados.</p>';
             }
 
-            // Prospecto/Cliente
-            let prospectoAsociado = 'ND';
-            if (det.prospecto_nombres || det.prospecto_apellidos) { // Adaptar esto dependiendo de lo que devuelva tu API internamente, si no devuelve nombre usar prospecto_id
-                prospectoAsociado = `${det.prospecto_nombres || ''} ${det.prospecto_apellidos || ''}`.trim();
-            } else if (det.prospecto_id) {
-                prospectoAsociado = `Prospecto #${det.prospecto_id}`;
-            }
-
-            // Actualizar vista
-            if (document.getElementById('detNombre')) document.getElementById('detNombre').textContent = pNombre;
-
-            if (document.getElementById('detEstado')) {
-                document.getElementById('detEstado').textContent = detEstado;
-            }
-            if (document.getElementById('detPrioridad')) {
-                document.getElementById('detPrioridad').textContent = pText;
-                document.getElementById('detPrioridad').className = `px-2 py-1 rounded font-medium ${pColor}`;
-            }
-
-            if (document.getElementById('detResponsable')) document.getElementById('detResponsable').textContent = responsable;
-            if (document.getElementById('detProspectoInfo')) document.getElementById('detProspectoInfo').textContent = prospectoAsociado;
-
-            // Fechas
-            const fechaInicio = document.getElementById('detFechaInicio');
-            if (fechaInicio) {
-                fechaInicio.textContent = det.fecha_inicio ? formatFecha(det.fecha_inicio) : (det.fecha_contacto ? formatFecha(det.fecha_contacto) : 'No registrada');
-            }
-
-            const fechaFin = document.getElementById('detFechaFin');
-            if (fechaFin) {
-                fechaFin.textContent = det.fecha_fin ? formatFecha(det.fecha_fin) : 'Aún no finaliza';
-            }
-
-            // Ocultar Loader, Mostrar Contenido
-            if (loader) loader.classList.add('hidden');
-            if (contenido) contenido.classList.remove('hidden');
+            // Mostrar contenido
+            loader.classList.add('hidden');
+            contenido.classList.remove('hidden');
 
         } else {
-            if (loader) loader.innerHTML = `<span class="text-sm text-red-500">Error: ${data.message || 'No se pudo cargar'}</span>`;
+            throw new Error(data.message || "Error al obtener datos");
         }
-
-    } catch (e) {
-        console.error('Error fetching detalle actividad', e);
-        if (loader) loader.innerHTML = '<span class="text-sm text-red-500">Error de comunicación.</span>';
+    } catch (err) {
+        console.error("Error cargando detalle:", err);
+        Swal.fire('Error', 'No se pudo cargar la información de la actividad', 'error');
+        closeModal(modalId);
     }
 }
+
+async function guardarLinkDrive() {
+    const idActividad = document.getElementById('detActividadId').value;
+    const idProspecto = document.getElementById('detProspectoId').value;
+    const link = document.getElementById('detLinkDrive').value;
+
+    if (!idActividad) return;
+
+    Swal.fire({
+        title: 'Guardando...',
+        didOpen: () => { Swal.showLoading(); }
+    });
+
+    try {
+        const formData = new FormData();
+        formData.append('id_actividad', idActividad);
+        formData.append('id_prospecto', idProspecto);
+        formData.append('dt-link-drive', link); 
+
+        const res = await fetch('update-link-drive', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await res.json();
+
+        if (data.status === 'success') {
+            Swal.fire({
+                icon: 'success',
+                title: '¡Guardado!',
+                text: 'El enlace de Google Drive se ha actualizado correctamente.',
+                timer: 2000,
+                showConfirmButton: false
+            });
+        } else {
+            throw new Error(data.message || "No se pudo guardar");
+        }
+    } catch (err) {
+        console.error("Error al guardar link:", err);
+        Swal.fire('Error', 'Ocurrió un error al intentar guardar el enlace', 'error');
+    }
+}
+
+
 
 // ----------------------------------------------------
 // FORMAT FECHA HELPER
@@ -576,4 +697,29 @@ function formatFecha(dateString) {
     const s = tParts[2] || '00';
 
     return `${dParts[2]}-${dParts[1]}-${dParts[0]} ${h}:${m}:${s}`;
+}
+
+async function cargarAuxiliares() {
+    const select = document.getElementById('filtroAuxiliar');
+    if (!select) return;
+
+    try {
+        const resp = await fetch('usuarios/get-all');
+        const data = await resp.json();
+
+        if (data.status === 'success' && Array.isArray(data.result)) {
+            // Filtrar auxiliares (asumiendo que los que no son rol 1 o 2 son auxiliares)
+            // El usuario dijo "filtralo por el rol_id", usualmente auxiliares son rol 3
+            const auxiliares = data.result.filter(u => u.rol_id != 1 && u.rol_id != 2);
+            
+            auxiliares.forEach(aux => {
+                const opt = document.createElement('option');
+                opt.value = aux.id;
+                opt.textContent = `${aux.nombres} ${aux.apellidos}`;
+                select.appendChild(opt);
+            });
+        }
+    } catch (err) {
+        console.error('Error cargando auxiliares:', err);
+    }
 }

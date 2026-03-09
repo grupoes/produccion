@@ -21,6 +21,9 @@
                 extend: {
                     colors: {
                         "primary": "#135bec",
+                        "success": "#10b981",
+                        "warning": "#f59e0b",
+                        "danger": "#ef4444",
                         "background-light": "#f6f6f8",
                         "background-dark": "#101622",
                         "neutral-dark": "#1a2233",

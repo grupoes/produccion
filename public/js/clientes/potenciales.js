@@ -488,16 +488,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (selectPersonal) {
         selectPersonal.addEventListener('change', async e => {
             const personalId = e.target.value;
+            ocultarUltimoHorario();
+
             if (personalId) {
                 try {
                     const res = await fetch('horario/get-by-id/' + personalId);
                     const data = await res.json();
 
-                    // Si no trae data o longitud = 0
                     if (!data || !data.result || data.result.length === 0) {
                         mostrarHorarioManual();
                     } else {
                         ocultarHorarioManual();
+                        // Si tiene horario, traer el último para referencia
+                        cargarUltimoHorario(personalId);
                     }
                 } catch (err) {
                     console.error('Error obteniendo horario:', err);
@@ -639,6 +642,32 @@ function ocultarHorarioManual() {
     if (contenedor) contenedor.classList.add('hidden');
     if (fInicio) { fInicio.required = false; fInicio.value = ''; }
     if (hInicio) { hInicio.required = false; hInicio.value = ''; }
+}
+
+async function cargarUltimoHorario(personalId) {
+    const contenedor = document.getElementById('containerUltimoHorario');
+    const detalle = document.getElementById('detalleUltimoHorario');
+    if (!contenedor || !detalle) return;
+
+    try {
+        const resp = await fetch(`get-ultimo-horario/${personalId}`);
+        const data = await resp.json();
+
+        if (data.status === 'success' && data.message) {
+            contenedor.classList.remove('hidden');
+            detalle.innerHTML = data.message; // En este caso el backend devuelve el string formateado como message
+        } else {
+            ocultarUltimoHorario();
+        }
+    } catch (e) {
+        console.error('Error ultimo horario:', e);
+        ocultarUltimoHorario();
+    }
+}
+
+function ocultarUltimoHorario() {
+    const contenedor = document.getElementById('containerUltimoHorario');
+    if (contenedor) contenedor.classList.add('hidden');
 }
 
 function setupSearchSelectStatic(inputId, resultsId, optionsClass, hiddenId, containerId) {

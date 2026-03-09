@@ -227,6 +227,16 @@
                                 </select>
                             </div>
 
+                            <div id="containerUltimoHorario" class="hidden bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700/50">
+                                <div class="flex items-center gap-2 mb-2">
+                                    <span class="material-symbols-outlined text-primary text-[18px]">history</span>
+                                    <h4 class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Último Horario / Tarea</h4>
+                                </div>
+                                <div id="detalleUltimoHorario" class="text-sm font-bold text-slate-700 dark:text-slate-200">
+                                    Cargando...
+                                </div>
+                            </div>
+
                             <div>
                                 <label class="block text-[13px] font-bold text-slate-700 dark:text-slate-300 mb-1 ml-1">Link Drive</label>
                                 <div class="relative">

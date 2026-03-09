@@ -140,6 +140,8 @@ class Actividades extends BaseController
         $fecha_fin = $this->request->getPost('fecha_fin');
         $estado_progreso = $this->request->getPost('estado_progreso');
 
+        $id_user = $this->request->getPost('id_user') ?: session()->get('id_user');
+
         $ruta = getenv('URL_BACKEND') . 'actividad/get-estados-actividades';
 
         $client = \Config\Services::curlrequest();
@@ -153,7 +155,7 @@ class Actividades extends BaseController
                 'fecha_inicio' => $fecha_inicio,
                 'fecha_fin' => $fecha_fin,
                 'estado_progreso' => $estado_progreso,
-                'id' => session()->get('id_user')
+                'id' => $id_user
             ]
         ]);
 
@@ -209,6 +211,34 @@ class Actividades extends BaseController
             'status' => 'success',
             'message' => $data['message'],
             'result' => $data['result']
+        ]);
+    }
+
+    public function traer_ultimo_horario_usuario($usuario_id)
+    {
+        $ruta = getenv('URL_BACKEND') . 'actividad/get-ultimo-horario/' . $usuario_id;
+
+        $client = \Config\Services::curlrequest();
+
+        $response = $client->get($ruta, [
+            'headers' => [
+                'Accept' => 'application/json'
+            ],
+            'http_errors' => false
+        ]);
+
+        $data = json_decode($response->getBody(), true);
+
+        if (!$data || $data['status'] == 500 || $data['status'] == 400) {
+            return $this->response->setJSON([
+                'status' => 'error',
+                'message' => $data['messages']['error']
+            ]);
+        }
+
+        return $this->response->setJSON([
+            'status' => 'success',
+            'message' => $data['message']
         ]);
     }
 }

@@ -250,57 +250,41 @@
         opacity: 0.6;
     }
 </style>
-<div class="flex-1 overflow-y-auto custom-scrollbar p-8">
-    <!-- Metrics Section -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div class="bg-primary/10 border border-primary/20 p-6 rounded-xl flex flex-col">
-            <span class="text-primary text-sm font-semibold mb-1 uppercase tracking-wider">Entregas
-                Hoy</span>
-            <div class="flex items-end justify-between">
-                <h3 class="text-3xl font-bold">0</h3>
-                <span class="text-emerald-500 text-sm font-medium flex items-center">
-                    <span class="material-symbols-outlined text-sm mr-1">trending_up</span> +5%
-                </span>
-            </div>
+<div class="flex-1 overflow-y-auto custom-scrollbar p-6 lg:p-8 space-y-8">
+    <!-- Header Summary -->
+    <div class="flex flex-col md:flex-row md:items-end justify-between gap-6">
+        <div>
+            <p class="text-primary font-black text-xs uppercase tracking-[0.2em] mb-2 px-1">Panel de Control</p>
+            <h1 class="text-2xl lg:text-3xl font-black text-slate-900 dark:text-white flex items-center gap-3">
+                <span class="material-symbols-outlined text-primary text-3xl">dashboard</span>
+                Mis Actividades de Hoy
+            </h1>
         </div>
-        <div class="bg-primary/10 border border-primary/20 p-6 rounded-xl flex flex-col">
-            <span class="text-primary text-sm font-semibold mb-1 uppercase tracking-wider">Pendientes
-                Hoy</span>
-            <div class="flex items-end justify-between">
-                <h3 class="text-3xl font-bold">0</h3>
-                <span class="text-orange-500 text-sm font-medium flex items-center">
-                    <span class="material-symbols-outlined text-sm mr-1">trending_down</span> -0%
-                </span>
+        <div class="flex items-center gap-3 bg-white dark:bg-slate-900 p-2 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+            <div class="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                <span class="material-symbols-outlined">calendar_today</span>
             </div>
-        </div>
-        <div class="bg-primary/10 border border-primary/20 p-6 rounded-xl flex flex-col">
-            <span class="text-primary text-sm font-semibold mb-1 uppercase tracking-wider">Entrega
-                Semanal</span>
-            <div class="flex items-end justify-between">
-                <h3 class="text-3xl font-bold">0</h3>
-                <span class="text-emerald-500 text-sm font-medium flex items-center">
-                    <span class="material-symbols-outlined text-sm mr-1">trending_up</span> +0%
-                </span>
-            </div>
-        </div>
-        <div class="bg-primary/10 border border-primary/20 p-6 rounded-xl flex flex-col">
-            <span class="text-primary text-sm font-semibold mb-1 uppercase tracking-wider">Pendientes
-                Semanal</span>
-            <div class="flex items-end justify-between">
-                <h3 class="text-3xl font-bold">0</h3>
-                <span class="text-orange-500 text-sm font-medium flex items-center">
-                    <span class="material-symbols-outlined text-sm mr-1">trending_down</span> -0%
-                </span>
+            <div class="pr-4">
+                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Fecha Actual</p>
+                <p class="text-xs font-black text-slate-700 dark:text-slate-200"><?= date('d M, Y') ?></p>
             </div>
         </div>
     </div>
+
+    <?php
+    $session = session();
+    $rol_id = $session->get('rol_id');
+    ?>
+    <script>
+        const USER_ROL_ID = <?= json_encode($rol_id) ?>;
+    </script>
     <!-- Workflow Section -->
     <div id="workflowSection" class="flex flex-col h-full min-h-[600px] pb-10">
-        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
-            <div class="flex items-center gap-4">
-                <h2 class="text-2xl font-bold">Potenciales Clientes</h2>
+        <div class="mb-6">
+
+            <div class="flex flex-wrap items-center gap-4">
                 <!-- View Toggle -->
-                <div class="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
+                <div class="flex bg-slate-100 dark:bg-slate-800 p-1.5 rounded-xl border border-slate-200 dark:border-slate-700">
                     <button id="showKanban" class="px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all bg-white dark:bg-slate-700 text-primary shadow-sm">
                         Tablero
                     </button>
@@ -308,22 +292,33 @@
                         Calendario
                     </button>
                 </div>
-            </div>
 
-            <div id="kanbanFilters" class="flex flex-wrap items-center gap-2 bg-slate-50 dark:bg-slate-800/50 p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
-                <div class="relative flex items-center group">
-                    <span class="material-symbols-outlined absolute left-2.5 text-slate-400 text-[18px] group-focus-within:text-primary transition-colors">event</span>
-                    <input type="date" id="filtroFechaInicio" class="bg-white dark:bg-background-dark border border-slate-200 dark:border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm font-medium outline-none text-slate-700 dark:text-slate-200 focus:border-primary transition-colors cursor-pointer" />
+                <div id="kanbanFilters" class="flex flex-wrap items-center gap-2 bg-slate-50 dark:bg-slate-800/50 p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                    <?php if ($rol_id == 1 || $rol_id == 2): ?>
+                        <!-- Select Auxiliar -->
+                        <div class="relative flex items-center group">
+                            <span class="material-symbols-outlined absolute left-2.5 text-slate-400 text-[18px] group-focus-within:text-primary transition-colors">person</span>
+                            <select id="filtroAuxiliar" class="bg-white dark:bg-background-dark border border-slate-200 dark:border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm font-medium outline-none text-slate-700 dark:text-slate-200 focus:border-primary transition-colors cursor-pointer min-w-[180px]">
+                                <option value="">Todos los Auxiliares</option>
+                            </select>
+                        </div>
+                    <?php endif; ?>
+
+                    <div class="relative flex items-center group">
+                        <span class="material-symbols-outlined absolute left-2.5 text-slate-400 text-[18px] group-focus-within:text-primary transition-colors">event</span>
+                        <input type="date" id="filtroFechaInicio" class="bg-white dark:bg-background-dark border border-slate-200 dark:border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm font-medium outline-none text-slate-700 dark:text-slate-200 focus:border-primary transition-colors cursor-pointer" />
+                    </div>
+                    <span class="text-slate-400 dark:text-slate-500 font-medium">-</span>
+                    <div class="relative flex items-center group">
+                        <span class="material-symbols-outlined absolute left-2.5 text-slate-400 text-[18px] group-focus-within:text-primary transition-colors">event</span>
+                        <input type="date" id="filtroFechaFin" class="bg-white dark:bg-background-dark border border-slate-200 dark:border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm font-medium outline-none text-slate-700 dark:text-slate-200 focus:border-primary transition-colors cursor-pointer" />
+                    </div>
+
+                    <button id="btnFiltrarDashboard" class="bg-primary hover:bg-primary/90 text-white p-1.5 px-3 flex items-center gap-1 overflow-hidden rounded-lg transition-colors ml-1" title="Filtrar Resultados">
+                        <span class="material-symbols-outlined text-[18px]">filter_list</span>
+                        <span class="text-xs font-bold uppercase tracking-wider">Filtrar</span>
+                    </button>
                 </div>
-                <span class="text-slate-400 dark:text-slate-500 font-medium">-</span>
-                <div class="relative flex items-center group">
-                    <span class="material-symbols-outlined absolute left-2.5 text-slate-400 text-[18px] group-focus-within:text-primary transition-colors">event</span>
-                    <input type="date" id="filtroFechaFin" class="bg-white dark:bg-background-dark border border-slate-200 dark:border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm font-medium outline-none text-slate-700 dark:text-slate-200 focus:border-primary transition-colors cursor-pointer" />
-                </div>
-                <button id="btnFiltrarDashboard" class="bg-primary hover:bg-primary/90 text-white p-1.5 px-3 flex items-center gap-1 overflow-hidden rounded-lg transition-colors ml-1" title="Filtrar Resultados">
-                    <span class="material-symbols-outlined text-[18px]">filter_list</span>
-                    <span class="text-xs font-bold uppercase tracking-wider">Filtrar</span>
-                </button>
             </div>
         </div>
         <!-- Kanban Board -->
@@ -439,33 +434,90 @@
                     <span class="material-symbols-outlined animate-spin text-primary text-3xl">progress_activity</span>
                 </div>
 
-                <div id="detalleContenido" class="hidden space-y-4">
-                    <!-- Nombre Actividad -->
-                    <div>
-                        <h4 id="detNombre" class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2"></h4>
-                        <div class="flex flex-wrap gap-2 text-sm">
-                            <span id="detEstado" class="px-2 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded font-medium"></span>
-                            <span id="detPrioridad" class="px-2 py-1 rounded font-medium"></span>
+                <div id="detalleContenido" class="hidden space-y-6">
+                    <!-- IDs Ocultos -->
+                    <input type="hidden" id="detActividadId">
+                    <input type="hidden" id="detProspectoId">
+
+                    <!-- Header Detalle -->
+                    <div class="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                        <div class="flex-1">
+                            <h4 id="detNombre" class="text-xl font-black text-slate-900 dark:text-white mb-2 leading-tight"></h4>
+                            <div class="flex flex-wrap gap-2">
+                                <span id="detEstado" class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-lg text-[11px] font-bold uppercase tracking-wider border border-slate-200 dark:border-slate-700"></span>
+                                <span id="detPrioridad" class="px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider border border-white/10 shadow-sm"></span>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Datos extra -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50 mt-4">
-                        <div>
-                            <span class="block text-xs text-slate-500 font-semibold uppercase mb-1">Responsable</span>
-                            <span id="detResponsable" class="text-sm font-medium text-slate-800 dark:text-slate-200"></span>
+                    <!-- Grid de Información -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 bg-slate-50 dark:bg-slate-800/40 p-5 rounded-2xl border border-slate-100 dark:border-slate-700/50">
+                        <div class="space-y-1">
+                            <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Responsable</p>
+                            <p id="detResponsable" class="text-sm font-bold text-slate-800 dark:text-slate-200"></p>
                         </div>
-                        <div>
-                            <span class="block text-xs text-slate-500 font-semibold uppercase mb-1">Prospecto Asociado</span>
-                            <span id="detProspectoInfo" class="text-sm font-medium text-slate-800 dark:text-slate-200"></span>
+                        <div class="space-y-1">
+                            <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Información Cliente</p>
+                            <p id="detProspectoInfo" class="text-sm font-bold text-slate-800 dark:text-slate-200"></p>
                         </div>
-                        <div>
-                            <span class="block text-xs text-slate-500 font-semibold uppercase mb-1">Fecha de Inicio / Contacto</span>
-                            <span id="detFechaInicio" class="text-sm font-medium text-slate-800 dark:text-slate-200"></span>
+                        <div class="space-y-1">
+                            <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Procedencia (Origen)</p>
+                            <p id="detOrigen" class="text-sm font-bold text-slate-800 dark:text-slate-200"></p>
                         </div>
-                        <div>
-                            <span class="block text-xs text-slate-500 font-semibold uppercase mb-1">Fecha Fin</span>
-                            <span id="detFechaFin" class="text-sm font-medium text-slate-800 dark:text-slate-200"></span>
+                        <div class="space-y-1">
+                            <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Fecha Inicio / Contacto</p>
+                            <p id="detFechaInicio" class="text-sm font-bold text-slate-800 dark:text-slate-200"></p>
+                        </div>
+                        <div class="space-y-1">
+                            <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest text-primary">Fecha de Entrega</p>
+                            <p id="detFechaEntrega" class="text-sm font-black text-primary dark:text-primary-light"></p>
+                        </div>
+                        <div class="space-y-1">
+                            <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Nivel Académico</p>
+                            <p id="detNivel" class="text-sm font-bold text-slate-800 dark:text-slate-200"></p>
+                        </div>
+                        <div class="space-y-1">
+                            <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Universidad / Institución</p>
+                            <p id="detInstitucion" class="text-sm font-bold text-slate-800 dark:text-slate-200"></p>
+                        </div>
+                        <div class="space-y-1 md:col-span-2">
+                            <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Carrera Profesional</p>
+                            <p id="detCarrera" class="text-sm font-bold text-slate-800 dark:text-slate-200"></p>
+                        </div>
+                    </div>
+
+                    <!-- Observaciones -->
+                    <div class="space-y-2 bg-slate-50 dark:bg-slate-800/40 p-5 rounded-2xl border border-slate-100 dark:border-slate-700/50">
+                        <div class="flex items-center gap-2">
+                            <span class="material-symbols-outlined text-slate-400 text-[18px]">notes</span>
+                            <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Observaciones / Contenido</p>
+                        </div>
+                        <p id="detContenido" class="text-sm text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap italic"></p>
+                    </div>
+
+                    <!-- Contactos Adicionales -->
+                    <div class="space-y-3">
+                        <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest px-1">Contactos Vinculados</p>
+                        <div id="detContactosList" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <!-- Lista dinámica -->
+                        </div>
+                    </div>
+
+                    <!-- Link de Drive (Editable) -->
+                    <div class="bg-primary/5 p-5 rounded-2xl border border-primary/20 space-y-3">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="material-symbols-outlined text-primary text-[20px]">add_link</span>
+                            <p class="text-xs font-black text-primary uppercase tracking-widest">Enlace de Google Drive</p>
+                        </div>
+                        <div class="flex flex-col sm:flex-row gap-2">
+                            <input type="text" id="detLinkDrive" 
+                                   class="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-primary transition-all font-medium" 
+                                   placeholder="Pega aquí el enlace de la carpeta o archivo...">
+                            <button type="button" onclick="guardarLinkDrive()" 
+                                    class="bg-primary hover:bg-primary/90 text-white px-6 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2">
+                                <span class="material-symbols-outlined text-[18px]">save</span>
+                                Guardar
+                            </button>
                         </div>
                     </div>
                 </div>
