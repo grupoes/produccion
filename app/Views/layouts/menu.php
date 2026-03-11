@@ -11,10 +11,10 @@
             class="material-symbols-outlined text-sm transition-transform duration-200 expand-icon">expand_more</span>
     </button>
     <div class="submenu hidden space-y-1 ml-9 mt-1">
-        <a href="index.html"
+        <a href="<?= base_url('dashboard') ?>"
             class="block px-3 py-1.5 text-xs text-slate-500 hover:text-primary transition-colors">Vista
             General</a>
-        <a href="#"
+        <a href="<?= base_url('reportes-eficiencia') ?>"
             class="block px-3 py-1.5 text-xs text-slate-500 hover:text-primary transition-colors">Reportes
             de Eficiencia</a>
         <a href="#"

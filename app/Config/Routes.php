@@ -61,3 +61,5 @@ $routes->post('save-user', 'Usuario::create');
 $routes->get('usuarios/get-all', 'Usuario::getUsers');
 $routes->get('usuario/get-row/(:num)', 'Usuario::getUser/$1');
 $routes->get('usuario/delete/(:num)', 'Usuario::delete/$1');
+
+$routes->get('reportes-eficiencia', 'Home::index2');

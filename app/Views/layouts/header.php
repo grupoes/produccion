@@ -18,6 +18,13 @@
                 class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-lg py-2 pl-10 pr-4 text-sm focus:ring-2 focus:ring-primary"
                 placeholder="Global search..." type="text" />
         </div>
+
+        <button onclick="toggleTheme()"
+            class="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200 group text-slate-500 dark:text-slate-400 border border-transparent hover:border-slate-200 dark:hover:border-slate-700">
+            <span class="material-symbols-outlined dark:hidden">light_mode</span>
+            <span class="material-symbols-outlined hidden dark:block">dark_mode</span>
+        </button>
+
         <div class="relative inline-block text-left" id="userMenu">
             <button type="button"
                 class="flex items-center gap-3 p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200"

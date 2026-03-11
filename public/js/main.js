@@ -1,3 +1,8 @@
+function toggleTheme() {
+    const isDark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+}
+
 // Accordion Modules Logic
 const moduleHeaders = document.querySelectorAll('.module-header');
 
