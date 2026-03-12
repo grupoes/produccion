@@ -238,7 +238,8 @@ class Actividades extends BaseController
 
         return $this->response->setJSON([
             'status' => 'success',
-            'message' => $data['message']
+            'message' => $data['message'],
+            'result' => $data['result']
         ]);
     }
 }

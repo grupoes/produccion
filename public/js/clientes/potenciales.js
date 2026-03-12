@@ -655,7 +655,7 @@ async function cargarUltimoHorario(personalId) {
 
         if (data.status === 'success' && data.message) {
             contenedor.classList.remove('hidden');
-            detalle.innerHTML = data.message; // En este caso el backend devuelve el string formateado como message
+            detalle.innerHTML = data.message + " | " + data.result; // En este caso el backend devuelve el string formateado como message
         } else {
             ocultarUltimoHorario();
         }
