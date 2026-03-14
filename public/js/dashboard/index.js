@@ -1,47 +1,3 @@
-function toggleSidebar() {
-    const sidebar = document.getElementById('mainSidebar');
-    const backdrop = document.getElementById('sidebarBackdrop');
-    const isMobile = window.innerWidth < 1024;
-
-    if (isMobile) {
-        sidebar.classList.toggle('mobile-open');
-        backdrop.classList.toggle('hidden');
-        setTimeout(() => {
-            backdrop.classList.toggle('opacity-0');
-            backdrop.classList.toggle('opacity-100');
-        }, 10);
-    } else {
-        sidebar.classList.toggle('sidebar-collapsed');
-    }
-}
-
-function toggleSubmenu(button) {
-    const moduleItem = button.closest('.module-item');
-    const submenu = moduleItem.querySelector('.submenu');
-    const chevron = button.querySelector('.material-symbols-outlined:last-child');
-
-    // Toggle visibility
-    const isHidden = submenu.classList.contains('hidden');
-
-    // Close other submenus
-    document.querySelectorAll('.submenu').forEach(s => {
-        if (s !== submenu) {
-            s.classList.add('hidden');
-            const otherButton = s.previousElementSibling;
-            const otherChevron = otherButton.querySelector('.material-symbols-outlined:last-child');
-            if (otherChevron) otherChevron.style.transform = 'rotate(0deg)';
-        }
-    });
-
-    if (isHidden) {
-        submenu.classList.remove('hidden');
-        chevron.style.transform = 'rotate(180deg)';
-        // Maintain primary color for button if needed
-    } else {
-        submenu.classList.add('hidden');
-        chevron.style.transform = 'rotate(0deg)';
-    }
-}
 
 // Drag and Drop Implementation
 function asignarEventosDragDrop() {
@@ -327,7 +283,25 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // --- Lógica para Zoom de Imágenes en Observaciones ---
+    const detContenido = document.getElementById('detContenido');
+    if (detContenido) {
+        detContenido.addEventListener('click', (e) => {
+            if (e.target.tagName === 'IMG') {
+                const src = e.target.src;
+                const imgZoomed = document.getElementById('imgZoomed');
+                if (imgZoomed) {
+                    imgZoomed.src = src;
+                    if (typeof openModal === 'function') {
+                        openModal('modalImagenZoom');
+                    }
+                }
+            }
+        });
+    }
 });
+
 
 let calendarInstance = null;
 function initCalendar() {
@@ -369,7 +343,7 @@ function initCalendar() {
 
                 if (data.status === 'success' || data.status === 200) {
                     let results = data.result || [];
-                    
+
                     if (!isAdmin) {
                         const now = new Date();
                         const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -563,39 +537,39 @@ async function verDetalleActividad(id) {
             // Datos Principales
             document.getElementById('detNombre').textContent = det.tarea || 'Sin Título';
             document.getElementById('detEstado').textContent = det.estado_progreso;
-            
+
             // Prioridad Logic
             let pColor = '';
             let pText = '';
             // 1=Baja, 2=Media, 3=Alta
-            if (det.prioridad == '3') { 
-                pText = 'Alta'; 
-                pColor = 'bg-danger text-white border-danger/50 shadow-danger/20'; 
-            } else if (det.prioridad == '1') { 
-                pText = 'Baja'; 
-                pColor = 'bg-success text-white border-success/50 shadow-success/20'; 
-            } else { 
-                pText = 'Media'; 
-                pColor = 'bg-warning text-slate-900 border-warning/50 shadow-warning/20'; 
+            if (det.prioridad == '3') {
+                pText = 'Alta';
+                pColor = 'bg-danger text-white border-danger/50 shadow-danger/20';
+            } else if (det.prioridad == '1') {
+                pText = 'Baja';
+                pColor = 'bg-success text-white border-success/50 shadow-success/20';
+            } else {
+                pText = 'Media';
+                pColor = 'bg-warning text-slate-900 border-warning/50 shadow-warning/20';
             }
-            
+
             const elPrioridad = document.getElementById('detPrioridad');
             elPrioridad.textContent = pText;
             elPrioridad.className = `px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider border shadow-sm ${pColor}`;
 
             // Responsable y Prospecto
             const nombreProspecto = `${det.nombres || ''} ${det.apellidos || ''}`.trim();
-            document.getElementById('detResponsable').textContent = 'Responsable Asignado'; 
+            document.getElementById('detResponsable').textContent = 'Responsable Asignado';
             document.getElementById('detProspectoInfo').textContent = `${det.estado_cliente} - ${nombreProspecto}`;
             document.getElementById('detOrigen').textContent = det.origen || 'No especificado';
             document.getElementById('detFechaInicio').textContent = det.fecha_contacto ? formatFecha(det.fecha_contacto) : '-';
-            
+
             // Nuevos Campos
             document.getElementById('detFechaEntrega').textContent = det.fecha_entrega ? formatFecha(det.fecha_entrega) : 'Sin fecha pactada';
             document.getElementById('detNivel').textContent = det.nivel_academico || 'No especificado';
             document.getElementById('detInstitucion').textContent = det.institucion || 'No especificada';
             document.getElementById('detCarrera').textContent = det.carrera || 'No especificada';
-            document.getElementById('detContenido').textContent = det.contenido || 'Sin observaciones adicionales.';
+            document.getElementById('detContenido').innerHTML = det.contenido || 'Sin observaciones adicionales.';
 
             // Link Drive
             document.getElementById('detLinkDrive').value = det.link_drive || '';
@@ -651,7 +625,7 @@ async function guardarLinkDrive() {
         const formData = new FormData();
         formData.append('id_actividad', idActividad);
         formData.append('id_prospecto', idProspecto);
-        formData.append('dt-link-drive', link); 
+        formData.append('dt-link-drive', link);
 
         const res = await fetch('update-link-drive', {
             method: 'POST',
@@ -711,7 +685,7 @@ async function cargarAuxiliares() {
             // Filtrar auxiliares (asumiendo que los que no son rol 1 o 2 son auxiliares)
             // El usuario dijo "filtralo por el rol_id", usualmente auxiliares son rol 3
             const auxiliares = data.result.filter(u => u.rol_id != 1 && u.rol_id != 2);
-            
+
             auxiliares.forEach(aux => {
                 const opt = document.createElement('option');
                 opt.value = aux.id;

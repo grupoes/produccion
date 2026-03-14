@@ -15,6 +15,7 @@ $routes->get('permisos', 'Permisos::index');
 $routes->get('permisos/lista-roles', 'Permisos::listaRoles');
 $routes->post('permisos/guardar-rol', 'Permisos::guardarRol');
 $routes->get('permisos/eliminar-rol/(:num)', 'Permisos::eliminarRol/$1');
+$routes->get('permisos/get-row/(:num)', 'Permisos::getPermisos/$1');
 
 
 $routes->get('usuarios', 'Usuario::index');
@@ -48,7 +49,7 @@ $routes->get('actividades', 'Actividades::getActividades');
 $routes->get('getActividadRow/(:num)', 'Actividades::getActividadRow/$1');
 $routes->post('update-link-drive', 'Actividades::updateLinkDrive');
 $routes->post('getEstadosActividades', 'Actividades::getEstadosActividades');
-$routes->get('get-ultimo-horario/(:num)', 'Actividades::traer_ultimo_horario_usuario/$1');
+$routes->get('get-ultimo-horario/(:num)/(:num)', 'Actividades::traer_ultimo_horario_usuario/$1/$2');
 
 $routes->post('update-estado-tarea', 'Actividades::updateEstadoTarea');
 
@@ -63,3 +64,20 @@ $routes->get('usuario/get-row/(:num)', 'Usuario::getUser/$1');
 $routes->get('usuario/delete/(:num)', 'Usuario::delete/$1');
 
 $routes->get('reportes-eficiencia', 'Home::index2');
+
+$routes->get('modulos', 'Modulos::index');
+$routes->get('modulos/get-all', 'Modulos::getAll');
+$routes->get('modulos/get-principales', 'Modulos::getPrincipales');
+$routes->post('modulos/save', 'Modulos::save');
+$routes->get('modulos/delete/(:num)', 'Modulos::delete/$1');
+$routes->get('modulos/get-padres', 'Modulos::getPadres');
+
+$routes->get('acciones', 'Acciones::index');
+$routes->get('acciones/get-all', 'Acciones::getAll');
+$routes->post('acciones/save', 'Acciones::save');
+$routes->get('acciones/delete/(:num)', 'Acciones::delete/$1');
+
+$routes->get('configuracion-acciones', 'Acciones::configuracion');
+$routes->post('acciones/save-config', 'Acciones::saveConfig');
+$routes->get('acciones/get-by-modulo/(:num)', 'Acciones::getActionsByModule/$1');
+

@@ -249,7 +249,25 @@
     .fc .fc-button-primary:disabled {
         opacity: 0.6;
     }
+
+    /* Zoomable Images in Detail */
+    #detContenido img {
+        cursor: zoom-in;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        border-radius: 0.75rem;
+        max-width: 100%;
+        margin: 1rem 0;
+        display: block;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    }
+
+    #detContenido img:hover {
+        transform: scale(1.01);
+        filter: brightness(1.05);
+        box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+    }
 </style>
+
 <div class="flex-1 overflow-y-auto custom-scrollbar p-6 lg:p-8 space-y-8">
     <!-- Header Summary -->
     <div class="flex flex-col md:flex-row md:items-end justify-between gap-6">
@@ -405,7 +423,7 @@
 <!-- Modal Detalle Actividad -->
 <div id="modalDetalleActividad" class="fixed inset-0 z-[60] hidden overflow-y-auto overflow-x-hidden">
     <!-- Backdrop -->
-    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity opacity-0" id="modalBackdrop"></div>
+    <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity opacity-0 cursor-pointer" id="modalBackdrop" onclick="closeModal('modalDetalleActividad')"></div>
 
     <!-- Modal Content -->
     <div class="relative flex min-h-screen items-center justify-center p-4">
@@ -534,7 +552,27 @@
     </div>
 </div>
 
+<!-- Modal para Zoom de Imagen -->
+<div id="modalImagenZoom" class="fixed inset-0 z-[70] hidden overflow-y-auto overflow-x-hidden">
+    <!-- Backdrop con cierre al click -->
+    <div class="fixed inset-0 bg-slate-900/90 backdrop-blur-md transition-opacity opacity-0 cursor-zoom-out" id="modalBackdrop" onclick="closeModal('modalImagenZoom')"></div>
+    
+    <!-- Wrapper interno flex -->
+    <div class="relative flex min-h-screen items-center justify-center p-4 pointer-events-none">
+        <!-- Contenedor de Imagen -->
+        <div class="relative z-10 w-full max-w-5xl transform transition-all scale-95 opacity-0 duration-300 pointer-events-auto" id="modalContent">
+            <div class="flex flex-col items-center gap-4">
+                <img id="imgZoomed" src="" alt="Zoom" class="max-w-full max-h-[85vh] rounded-2xl shadow-2xl border-4 border-white/10">
+                <button type="button" onclick="closeModal('modalImagenZoom')" class="bg-white/10 hover:bg-white/20 text-white p-3 rounded-full backdrop-blur-md transition-all group">
+                    <span class="material-symbols-outlined text-[32px] group-hover:scale-110 transition-transform">close</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <?= $this->endSection() ?>
+
 
 <?= $this->section('js') ?>
 <!-- SweetAlert2 -->

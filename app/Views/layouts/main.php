@@ -195,7 +195,7 @@
             </main>
         </div>
     </div>
-    <script src="<?= base_url('js/main.js') ?>"></script>
+    <script src="<?= base_url('js/main.js') ?>?v=<?= time() ?>"></script>
     <?= $this->renderSection('js') ?>
 
 </body>

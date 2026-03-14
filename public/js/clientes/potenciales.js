@@ -226,6 +226,7 @@ function nuevoProspecto() {
     if (selectUser) selectUser.innerHTML = '<option value="">Asignar personal...</option>';
 
     if (typeof ocultarHorarioManual === 'function') ocultarHorarioManual();
+    if (typeof ocultarUltimoHorario === 'function') ocultarUltimoHorario();
 
     // Resetear contactos a uno vacío
     const contenedor = document.getElementById('contenedorContactos');
@@ -500,7 +501,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else {
                         ocultarHorarioManual();
                         // Si tiene horario, traer el último para referencia
-                        cargarUltimoHorario(personalId);
+                        const idTareaActual = document.getElementById('selectedTaskId')?.value || '';
+                        cargarUltimoHorario(personalId, idTareaActual);
                     }
                 } catch (err) {
                     console.error('Error obteniendo horario:', err);
@@ -516,6 +518,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectTipoTarea = document.getElementById('tipo_tarea');
     if (selectTipoTarea) {
         selectTipoTarea.addEventListener('change', renderizarTareasPorTipo);
+    }
+
+    // ── Re-cargar horario al seleccionar tarea ──
+    const taskResultsContainer = document.getElementById('taskResultsList');
+    if (taskResultsContainer) {
+        taskResultsContainer.addEventListener('click', (e) => {
+            const opt = e.target.closest('.task-option');
+            if (opt) {
+                // Esperar un tick para que selectedTaskId se actualice via setupSearchSelectStatic
+                setTimeout(() => {
+                    const idTarea = document.getElementById('selectedTaskId')?.value || '';
+                    const personalId = document.getElementById('personal_responsable')?.value || '';
+                    if (personalId && idTarea) {
+                        cargarUltimoHorario(personalId, idTarea);
+                    }
+                }, 50);
+            }
+        });
     }
 
     // ── Buscador carrera ──
@@ -644,18 +664,34 @@ function ocultarHorarioManual() {
     if (hInicio) { hInicio.required = false; hInicio.value = ''; }
 }
 
-async function cargarUltimoHorario(personalId) {
+async function cargarUltimoHorario(personalId, id_tarea) {
     const contenedor = document.getElementById('containerUltimoHorario');
     const detalle = document.getElementById('detalleUltimoHorario');
     if (!contenedor || !detalle) return;
 
+    // Si no se pasó id_tarea, intentar obtenerlo del input oculto
+    if (!id_tarea) {
+        id_tarea = document.getElementById('selectedTaskId')?.value || '';
+    }
+
+    // Si aún no hay tarea seleccionada, mostrar aviso y salir
+    if (!id_tarea) {
+        Swal.fire({
+            icon: 'info',
+            title: 'Seleccione una tarea',
+            text: 'Debe seleccionar una tarea antes de consultar el horario disponible.',
+            confirmButtonColor: '#135bec'
+        });
+        return;
+    }
+
     try {
-        const resp = await fetch(`get-ultimo-horario/${personalId}`);
+        const resp = await fetch(`get-ultimo-horario/${personalId}/${id_tarea}`);
         const data = await resp.json();
 
         if (data.status === 'success' && data.message) {
             contenedor.classList.remove('hidden');
-            detalle.innerHTML = data.message + " | " + data.result; // En este caso el backend devuelve el string formateado como message
+            detalle.innerHTML = data.message + " | " + data.result;
         } else {
             ocultarUltimoHorario();
         }

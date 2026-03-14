@@ -87,13 +87,23 @@ userDropdownButton.addEventListener('click', (e) => {
     }
 });
 
+let openModals = [];
+
 function openModal(modalId) {
     const modal = document.getElementById(modalId);
     if (!modal) return;
+
+    if (!openModals.includes(modalId)) {
+        openModals.push(modalId);
+    }
+
     const backdrop = modal.querySelector('#modalBackdrop');
     const content = modal.querySelector('#modalContent');
+
     modal.classList.remove('hidden');
+    // Force reflow
     modal.offsetHeight;
+
     if (backdrop) {
         backdrop.classList.remove('opacity-0');
         backdrop.classList.add('opacity-100');
@@ -102,14 +112,19 @@ function openModal(modalId) {
         content.classList.remove('scale-95', 'opacity-0');
         content.classList.add('scale-100', 'opacity-100');
     }
+
     document.body.style.overflow = 'hidden';
 }
 
 function closeModal(modalId) {
     const modal = document.getElementById(modalId);
     if (!modal) return;
+
+    openModals = openModals.filter(id => id !== modalId);
+
     const backdrop = modal.querySelector('#modalBackdrop');
     const content = modal.querySelector('#modalContent');
+
     if (backdrop) {
         backdrop.classList.remove('opacity-100');
         backdrop.classList.add('opacity-0');
@@ -118,9 +133,12 @@ function closeModal(modalId) {
         content.classList.remove('scale-100', 'opacity-100');
         content.classList.add('scale-95', 'opacity-0');
     }
+
     setTimeout(() => {
         modal.classList.add('hidden');
-        document.body.style.overflow = 'auto';
+        if (openModals.length === 0) {
+            document.body.style.overflow = 'auto';
+        }
     }, 300);
 }
 

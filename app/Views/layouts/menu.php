@@ -96,6 +96,12 @@
             <a href="#"
                 class="block px-3 py-1.5 text-xs text-slate-500 hover:text-primary transition-colors">Ajustes
                 del Sistema</a>
+            <a href="modulos"
+                class="block px-3 py-1.5 text-xs text-slate-500 hover:text-primary transition-colors">Modulos</a>
+            <a href="acciones"
+                class="block px-3 py-1.5 text-xs text-slate-500 hover:text-primary transition-colors">Acciones</a>
+            <a href="configuracion-acciones"
+                class="block px-3 py-1.5 text-xs text-slate-500 hover:text-primary transition-colors">Configuracion Acciones</a>
         </div>
     </div>
 </div>

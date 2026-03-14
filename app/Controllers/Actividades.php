@@ -214,9 +214,9 @@ class Actividades extends BaseController
         ]);
     }
 
-    public function traer_ultimo_horario_usuario($usuario_id)
+    public function traer_ultimo_horario_usuario($usuario_id, $id_tarea)
     {
-        $ruta = getenv('URL_BACKEND') . 'actividad/get-ultimo-horario/' . $usuario_id;
+        $ruta = getenv('URL_BACKEND') . 'actividad/get-ultimo-horario/' . $usuario_id . '/' . $id_tarea;
 
         $client = \Config\Services::curlrequest();
 
