@@ -1,0 +1,1094 @@
+<style>
+  .cal-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .cal-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 1rem 1.25rem;
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border: 1px solid #e5e7eb;
+    border-radius: 0.6rem;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+  .cal-header .cal-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: #0f172a;
+    margin-right: auto;
+  }
+  .cal-header .cal-title i {
+    color: #2563eb;
+    font-size: 1.35rem;
+  }
+  .cal-user-select-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .cal-user-select-wrap label {
+    font-size: 0.8rem;
+    color: #64748b;
+    font-weight: 500;
+    margin: 0;
+    white-space: nowrap;
+  }
+  .cal-user-select-wrap .form-select {
+    min-width: 220px;
+    border-color: #cbd5e1;
+  }
+  .cal-user-select-wrap .form-select:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 0.15rem rgba(37, 99, 235, 0.15);
+  }
+  .cal-user-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.78rem;
+  }
+
+  .cal-body {
+    display: grid;
+    grid-template-columns: minmax(280px, 320px) 1fr;
+    gap: 1rem;
+  }
+  @media (max-width: 991.98px) {
+    .cal-body {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .cal-side {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.6rem;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    max-height: 78vh;
+    overflow: hidden;
+  }
+  .cal-side-head {
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #f8fafc;
+  }
+  .cal-side-head h6 {
+    margin: 0;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #475569;
+    font-weight: 700;
+  }
+  .cal-side-head .count-pill {
+    background: #dbeafe;
+    color: #1d4ed8;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+  }
+  .cal-side-body {
+    padding: 0.5rem;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .reunion-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.7rem 0.75rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    background: #fff;
+    margin-bottom: 0.5rem;
+    transition: all 0.15s;
+    cursor: pointer;
+  }
+  .reunion-item:hover {
+    border-color: #93c5fd;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.08);
+    transform: translateY(-1px);
+  }
+  .reunion-item .reunion-icon {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    border-radius: 0.45rem;
+    background: #ede9fe;
+    color: #6d28d9;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+  }
+  .reunion-item .reunion-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .reunion-item .reunion-title {
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: #0f172a;
+    line-height: 1.2;
+    margin-bottom: 0.15rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .reunion-item .reunion-meta {
+    font-size: 0.74rem;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+  .reunion-item .reunion-meta i {
+    font-size: 0.85rem;
+  }
+  .reunion-item .badge {
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.25rem;
+  }
+
+  .cal-main {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .cal-main-head {
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: #f8fafc;
+  }
+  .cal-main-head .legend {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    margin-left: auto;
+    font-size: 0.72rem;
+    color: #475569;
+    flex-wrap: wrap;
+  }
+  .cal-main-head .legend .dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    margin-right: 0.3rem;
+    vertical-align: middle;
+  }
+  .dot.dot-prog {
+    background: #94a3b8;
+  }
+  .dot.dot-real-completed {
+    background: #16a34a;
+  }
+  .dot.dot-real-progress {
+    background: #2563eb;
+  }
+  .dot.dot-real-pending {
+    background: #9ca3af;
+  }
+
+  .cal-main-body {
+    padding: 1rem;
+    flex: 1;
+  }
+  #calendar {
+    min-height: 70vh;
+  }
+  /* FullCalendar polish */
+  .fc {
+    --fc-border-color: #e5e7eb;
+    --fc-page-bg-color: #ffffff;
+    --fc-neutral-bg-color: #f9fafb;
+    --fc-today-bg-color: rgba(37, 99, 235, 0.04);
+  }
+  .fc .fc-toolbar-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #0f172a;
+  }
+  .fc .fc-button {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    color: #334155;
+    text-transform: capitalize;
+    font-weight: 500;
+    font-size: 0.82rem;
+    padding: 0.35rem 0.7rem;
+    box-shadow: none !important;
+  }
+  .fc .fc-button:hover {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+    color: #0f172a;
+  }
+  .fc .fc-button-primary:not(:disabled).fc-button-active,
+  .fc .fc-button-primary:not(:disabled):active {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+  }
+  .fc-event {
+    border-radius: 0.3rem;
+    border: none;
+    padding: 2px 4px;
+    font-size: 0.78rem;
+  }
+  .fc-timegrid-slot {
+    height: 2.2em;
+  }
+  .fc-col-header-cell {
+    background: #f8fafc;
+    font-weight: 600;
+    color: #475569;
+  }
+  .fc-timegrid-axis-cushion {
+    color: #94a3b8;
+    font-size: 0.72rem;
+  }
+</style>
+
+<div class="cal-shell mt-2
+">
+  <!-- Header: user selector + title -->
+  <div class="cal-header">
+    <div class="cal-title">
+      <i class="ti ti-calendar-event"></i>
+      <span>Calendario de producción</span>
+    </div>
+
+    <div class="cal-user-select-wrap">
+      <i
+        class="ti ti-user-circle"
+        style="color: #64748b; font-size: 1.1rem"
+      ></i>
+      <label for="js-cal-user">Usuario</label>
+      <select class="form-select form-select-sm" id="js-cal-user" disabled>
+        <option value="">Cargando usuarios…</option>
+      </select>
+    </div>
+
+    <button
+      type="button"
+      class="btn btn-sm btn-primary"
+      id="js-cal-new-reunion"
+      disabled
+      title="Programar reunión o actividad (requiere seleccionar usuario)"
+    >
+      <i class="ti ti-plus me-1"></i>
+      Programar
+    </button>
+
+    <span class="cal-user-avatar" title="Sesión actual">YO</span>
+  </div>
+
+  <div class="cal-body">
+    <!-- Sidebar: REUNION-type tasks -->
+    <aside class="cal-side" aria-label="Tareas de tipo Reunión">
+      <div class="cal-side-head">
+        <h6><i class="ti ti-users-group me-1"></i> Tareas · Reuniones</h6>
+        <span class="count-pill" id="js-cal-reuniones-count">0</span>
+      </div>
+      <div class="cal-side-body" id="js-cal-reuniones-list">
+        <!-- mock vacío, sin lógica -->
+        <div class="text-center text-muted py-4" style="font-size: 0.85rem">
+          <i class="ti ti-info-circle me-1"></i>
+          Las reuniones se listarán aquí cuando se conecte la consulta.
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main: FullCalendar -->
+    <section class="cal-main">
+      <div class="cal-main-head">
+        <strong style="font-size: 0.85rem; color: #0f172a"
+          >Vista semanal</strong
+        >
+        <div class="legend">
+          <span><span class="dot dot-prog"></span>Programado</span>
+          <span><span class="dot dot-real-completed"></span>Completada</span>
+          <span><span class="dot dot-real-progress"></span>En progreso</span>
+          <span><span class="dot dot-real-pending"></span>Pendiente</span>
+        </div>
+      </div>
+      <div class="cal-main-body">
+        <div id="calendar"></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ================================================================
+     Modal: Detalle de la reunión
+     ================================================================ -->
+<div
+  class="modal fade"
+  id="js-cal-event-modal"
+  tabindex="-1"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="js-cal-event-title">Detalle de reunión</h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+          aria-label="Close"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-2">
+              Actividad
+            </h6>
+            <dl class="row mb-0 fs-sm">
+              <dt class="col-5 fw-medium text-muted">Tarea</dt>
+              <dd class="col-7" data-cal-field="tarea">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Tipo</dt>
+              <dd class="col-7" data-cal-field="tipo">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Prioridad</dt>
+              <dd class="col-7" data-cal-field="prioridad">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Estado</dt>
+              <dd class="col-7" data-cal-field="estado_progreso">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Fecha</dt>
+              <dd class="col-7" data-cal-field="fecha">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Hora</dt>
+              <dd class="col-7" data-cal-field="hora">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Duración</dt>
+              <dd class="col-7" data-cal-field="duracion">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Motivo</dt>
+              <dd class="col-7" data-cal-field="motivo">—</dd>
+            </dl>
+          </div>
+          <div class="col-md-6">
+            <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-2">
+              Potencial cliente
+            </h6>
+            <dl class="row mb-0 fs-sm">
+              <dt class="col-5 fw-medium text-muted">Título</dt>
+              <dd class="col-7" data-cal-field="titulo_prospecto">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Estado</dt>
+              <dd class="col-7" data-cal-field="estado_cliente">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">F. contacto</dt>
+              <dd class="col-7" data-cal-field="fecha_contacto">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">F. entrega</dt>
+              <dd class="col-7" data-cal-field="fecha_entrega">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Link Drive</dt>
+              <dd class="col-7 text-break" data-cal-field="link_drive">—</dd>
+            </dl>
+          </div>
+          <div class="col-12" data-cal-wrap="contactos" style="display: none">
+            <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-2">
+              Contactos
+            </h6>
+            <ul
+              class="list-group list-group-flush fs-sm"
+              data-cal-field="contactos"
+            ></ul>
+          </div>
+        </div>
+        <div
+          class="alert alert-warning mt-3 mb-0 d-none"
+          id="js-cal-event-warning"
+          role="alert"
+        >
+          <i class="ti ti-alert-triangle me-1"></i>
+          <span data-cal-field="warning"></span>
+        </div>
+      </div>
+      <div class="modal-footer d-flex justify-content-between flex-wrap gap-2">
+        <div class="d-flex gap-2 flex-wrap">
+          <button
+            type="button"
+            class="btn btn-outline-warning btn-sm d-none"
+            id="js-cal-btn-reprogramar"
+            data-actividad-id=""
+          >
+            <i class="ti ti-calendar-clock me-1"></i>
+            Reprogramar
+          </button>
+          <button
+            type="button"
+            class="btn btn-outline-info btn-sm d-none"
+            id="js-cal-btn-reasignar"
+            data-actividad-id=""
+          >
+            <i class="ti ti-user-share me-1"></i>
+            Reasignar
+          </button>
+          <button
+            type="button"
+            class="btn btn-outline-danger btn-sm d-none"
+            id="js-cal-btn-eliminar"
+            data-actividad-id=""
+          >
+            <i class="ti ti-trash me-1"></i>
+            Cancelar reunión
+          </button>
+        </div>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
+     Modal: Reprogramar (mismo usuario, otra fecha/hora)
+     ================================================================ -->
+<div
+  class="modal fade"
+  id="js-cal-reprogramar-modal"
+  tabindex="-1"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Reprogramar reunión</h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+          aria-label="Close"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <form id="js-cal-reprogramar-form" autocomplete="off">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">Fecha</label>
+              <input
+                type="date"
+                class="form-control"
+                id="js-cal-rep-fecha"
+                required
+              />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Hora</label>
+              <input
+                type="time"
+                class="form-control"
+                id="js-cal-rep-hora"
+                required
+              />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Duración (min)</label>
+              <input
+                type="number"
+                min="5"
+                step="5"
+                class="form-control"
+                id="js-cal-rep-duracion"
+                required
+              />
+            </div>
+            <div class="col-12">
+              <label class="form-label">Motivo (opcional)</label>
+              <textarea
+                class="form-control"
+                id="js-cal-rep-motivo"
+                rows="2"
+                maxlength="255"
+                placeholder="Ej: cliente pidió cambio de horario"
+              ></textarea>
+            </div>
+          </div>
+        </form>
+        <div id="js-cal-rep-result" class="mt-3"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          Cancelar
+        </button>
+        <button type="button" class="btn btn-primary" id="js-cal-rep-aplicar">
+          <i class="ti ti-save me-1"></i>
+          Aplicar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
+     Modal: Reasignar a otro usuario
+     ================================================================ -->
+<div
+  class="modal fade"
+  id="js-cal-reasignar-modal"
+  tabindex="-1"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Reasignar reunión</h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+          aria-label="Close"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <form id="js-cal-reasignar-form" autocomplete="off">
+          <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label">Nuevo usuario asignado</label>
+              <select class="form-select" id="js-cal-rea-usuario" required>
+                <option value="">— Selecciona —</option>
+              </select>
+              <small class="form-text text-muted" id="js-cal-rea-hint">
+                El listado se carga cuando elegís un candidato con hueco.
+              </small>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Fecha</label>
+              <input
+                type="date"
+                class="form-control"
+                id="js-cal-rea-fecha"
+                required
+              />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Hora</label>
+              <input
+                type="time"
+                class="form-control"
+                id="js-cal-rea-hora"
+                required
+              />
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Duración (min)</label>
+              <input
+                type="number"
+                min="5"
+                step="5"
+                class="form-control"
+                id="js-cal-rea-duracion"
+                required
+              />
+            </div>
+            <div class="col-md-3 d-flex align-items-end">
+              <button
+                type="button"
+                class="btn btn-soft-primary w-100"
+                id="js-cal-rea-buscar"
+              >
+                <i class="ti ti-search me-1"></i>
+                Con hueco
+              </button>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Motivo (opcional)</label>
+              <textarea
+                class="form-control"
+                id="js-cal-rea-motivo"
+                rows="2"
+                maxlength="255"
+              ></textarea>
+            </div>
+          </div>
+        </form>
+        <div id="js-cal-rea-result" class="mt-3"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          Cancelar
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary"
+          id="js-cal-rea-aplicar"
+          disabled
+        >
+          <i class="ti ti-save me-1"></i>
+          Reasignar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
+     Modal: Programar (REUNIONES + CLIENTES)
+     ================================================================ -->
+<div
+  class="modal fade"
+  id="js-cal-nueva-modal"
+  tabindex="-1"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Programar</h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+          aria-label="Close"
+        ></button>
+      </div>
+      <div class="modal-body p-0">
+        <!-- Tabs -->
+        <ul class="nav nav-tabs" role="tablist">
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link active"
+              id="js-cal-tab-reuniones-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#js-cal-tab-reuniones"
+              type="button"
+              role="tab"
+            >
+              <i class="ti ti-calendar-plus me-1"></i>REUNIONES
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link"
+              id="js-cal-tab-clientes-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#js-cal-tab-clientes"
+              type="button"
+              role="tab"
+            >
+              <i class="ti ti-users me-1"></i>CLIENTES
+            </button>
+          </li>
+        </ul>
+        <div class="tab-content p-3">
+          <!-- REUNIONES tab -->
+          <div
+            class="tab-pane fade show active"
+            id="js-cal-tab-reuniones"
+            role="tabpanel"
+          >
+            <form id="js-cal-nueva-form" autocomplete="off">
+              <div class="row g-3">
+                <div class="col-12">
+                  <label class="form-label"
+                    >Potencial cliente <span class="text-danger">*</span></label
+                  >
+                  <div class="position-relative">
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="js-cal-nueva-prospecto-q"
+                      placeholder="Buscar por título, nombre, apellido o documento…"
+                      autocomplete="off"
+                    />
+                    <div
+                      class="list-group position-absolute w-100 shadow-sm d-none"
+                      id="js-cal-nueva-prospecto-results"
+                      style="z-index: 1050; max-height: 240px; overflow-y: auto"
+                    ></div>
+                  </div>
+                  <input type="hidden" id="js-cal-nueva-prospecto-id" />
+                  <div
+                    class="form-text text-success d-none"
+                    id="js-cal-nueva-prospecto-sel"
+                  ></div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label"
+                    >Tarea (tipo REUNIÓN)
+                    <span class="text-danger">*</span></label
+                  >
+                  <select class="form-select" id="js-cal-nueva-tarea" required>
+                    <option value="">— Selecciona —</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label"
+                    >Usuario asignado <span class="text-danger">*</span></label
+                  >
+                  <select
+                    class="form-select"
+                    id="js-cal-nueva-usuario"
+                    required
+                  >
+                    <option value="">— Selecciona —</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label"
+                    >Fecha <span class="text-danger">*</span></label
+                  >
+                  <input
+                    type="date"
+                    class="form-control"
+                    id="js-cal-nueva-fecha"
+                    required
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label"
+                    >Hora <span class="text-danger">*</span></label
+                  >
+                  <input
+                    type="time"
+                    class="form-control"
+                    id="js-cal-nueva-hora"
+                    required
+                  />
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label"
+                    >Duración (min) <span class="text-danger">*</span></label
+                  >
+                  <input
+                    type="number"
+                    min="5"
+                    step="5"
+                    class="form-control"
+                    id="js-cal-nueva-duracion"
+                    value="60"
+                    required
+                  />
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label">Prioridad</label>
+                  <select class="form-select" id="js-cal-nueva-prioridad">
+                    <option value="MEDIA" selected>MEDIA</option>
+                    <option value="ALTA">ALTA</option>
+                    <option value="BAJA">BAJA</option>
+                  </select>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Motivo (opcional)</label>
+                  <textarea
+                    class="form-control"
+                    id="js-cal-nueva-motivo"
+                    rows="2"
+                    maxlength="255"
+                  ></textarea>
+                </div>
+              </div>
+            </form>
+            <div id="js-cal-nueva-result" class="mt-3"></div>
+          </div>
+
+          <!-- CLIENTES tab -->
+          <div class="tab-pane fade" id="js-cal-tab-clientes" role="tabpanel">
+            <div class="row g-2 align-items-end mb-3">
+              <div class="col-md-8">
+                <label class="form-label">Seleccionar cliente</label>
+                <select class="form-select" id="js-cal-clientes-select">
+                  <option value="">— Selecciona un cliente —</option>
+                </select>
+              </div>
+              <div class="col-md-4 d-flex gap-2">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-secondary"
+                  id="js-cal-clientes-refresh"
+                  title="Recargar lista"
+                >
+                  <i class="ti ti-refresh me-1"></i>Recargar
+                </button>
+              </div>
+            </div>
+            <div id="js-cal-clientes-actividades">
+              <div class="text-center text-muted py-4">
+                <i class="ti ti-info-circle me-1"></i>
+                Seleccioná un cliente para programar una actividad.
+              </div>
+            </div>
+            <!-- Formulario de programación para CLIENTES -->
+            <div
+              id="js-cal-clientes-form"
+              class="card border mt-3"
+              style="display: none"
+            >
+              <div class="card-body">
+                <h6 class="card-title text-uppercase text-muted fs-xxs mb-3">
+                  Programar actividad
+                </h6>
+                <div class="row g-3">
+                  <div class="col-md-8">
+                    <label class="form-label"
+                      >Tarea <span class="text-danger">*</span></label
+                    >
+                    <select class="form-select" id="js-cal-cli-tarea">
+                      <option value="">— Selecciona una tarea —</option>
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label"
+                      >Duración (min) <span class="text-danger">*</span></label
+                    >
+                    <input
+                      type="number"
+                      class="form-control"
+                      id="js-cal-cli-duracion"
+                      min="5"
+                      step="5"
+                      value="60"
+                      required
+                    />
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label"
+                      >Fecha <span class="text-danger">*</span></label
+                    >
+                    <input
+                      type="date"
+                      class="form-control"
+                      id="js-cal-cli-fecha"
+                      required
+                    />
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label"
+                      >Hora <span class="text-danger">*</span></label
+                    >
+                    <input
+                      type="time"
+                      class="form-control"
+                      id="js-cal-cli-hora"
+                      required
+                    />
+                  </div>
+                  <div class="col-12 d-flex justify-content-end gap-2">
+                    <button
+                      type="button"
+                      class="btn btn-primary"
+                      id="js-cal-cli-programar"
+                    >
+                      <i class="ti ti-plus me-1"></i>Programar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+            Cancelar
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            id="js-cal-nueva-aplicar"
+          >
+            <i class="ti ti-save me-1"></i>
+            Crear reunión
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================
+     Modal: Programar reunión (primera vez, desde sidebar)
+     ================================================================ -->
+  <div
+    class="modal fade"
+    id="js-cal-programar-modal"
+    tabindex="-1"
+    aria-hidden="true"
+  >
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">
+            <i class="ti ti-calendar-plus me-1"></i>
+            Programar reunión
+          </h5>
+          <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label="Close"
+          ></button>
+        </div>
+        <div class="modal-body">
+          <!-- Resumen del prospecto -->
+          <div class="card mb-3 border-0 bg-light">
+            <div class="card-body py-2 px-3">
+              <div class="row g-2 fs-sm">
+                <div class="col-md-6">
+                  <div class="text-muted text-uppercase fs-xxs fw-semibold">
+                    Prospecto
+                  </div>
+                  <div class="fw-medium" data-cal-prog="titulo">—</div>
+                </div>
+                <div class="col-md-6">
+                  <div class="text-muted text-uppercase fs-xxs fw-semibold">
+                    Contacto
+                  </div>
+                  <div data-cal-prog="contacto">—</div>
+                </div>
+                <div class="col-md-4">
+                  <div class="text-muted text-uppercase fs-xxs fw-semibold">
+                    Universidad
+                  </div>
+                  <div data-cal-prog="universidad">—</div>
+                </div>
+                <div class="col-md-4">
+                  <div class="text-muted text-uppercase fs-xxs fw-semibold">
+                    Carrera
+                  </div>
+                  <div data-cal-prog="carrera">—</div>
+                </div>
+                <div class="col-md-4">
+                  <div class="text-muted text-uppercase fs-xxs fw-semibold">
+                    Nivel académico
+                  </div>
+                  <div data-cal-prog="nivel">—</div>
+                </div>
+                <div class="col-md-4">
+                  <div class="text-muted text-uppercase fs-xxs fw-semibold">
+                    Tarea
+                  </div>
+                  <div data-cal-prog="tarea">—</div>
+                </div>
+                <div class="col-md-4">
+                  <div class="text-muted text-uppercase fs-xxs fw-semibold">
+                    F. entrega
+                  </div>
+                  <div data-cal-prog="fentrega">—</div>
+                </div>
+                <div class="col-md-4">
+                  <div class="text-muted text-uppercase fs-xxs fw-semibold">
+                    Prioridad
+                  </div>
+                  <div data-cal-prog="prioridad">—</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <form id="js-cal-programar-form" autocomplete="off">
+            <input type="hidden" id="js-cal-prog-actividad-id" />
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label"
+                  >Usuario asignado <span class="text-danger">*</span></label
+                >
+                <select class="form-select" id="js-cal-prog-usuario" required>
+                  <option value="">— Selecciona —</option>
+                </select>
+                <small class="form-text text-muted">
+                  Por defecto se usa el usuario que ya tenía la actividad.
+                </small>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label"
+                  >Fecha <span class="text-danger">*</span></label
+                >
+                <input
+                  type="date"
+                  class="form-control"
+                  id="js-cal-prog-fecha"
+                  required
+                />
+              </div>
+              <div class="col-md-3">
+                <label class="form-label"
+                  >Hora <span class="text-danger">*</span></label
+                >
+                <input
+                  type="time"
+                  class="form-control"
+                  id="js-cal-prog-hora"
+                  required
+                />
+              </div>
+              <div class="col-md-3">
+                <label class="form-label"
+                  >Duración (min) <span class="text-danger">*</span></label
+                >
+                <input
+                  type="number"
+                  min="5"
+                  step="5"
+                  class="form-control"
+                  id="js-cal-prog-duracion"
+                  value="60"
+                  required
+                />
+              </div>
+              <div class="col-md-9">
+                <label class="form-label">Motivo (opcional)</label>
+                <textarea
+                  class="form-control"
+                  id="js-cal-prog-motivo"
+                  rows="2"
+                  maxlength="255"
+                  placeholder="Ej: reunión inicial con el cliente"
+                ></textarea>
+              </div>
+            </div>
+          </form>
+          <div id="js-cal-prog-result" class="mt-3"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+            Cancelar
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            id="js-cal-prog-aplicar"
+          >
+            <i class="ti ti-calendar-check me-1"></i>
+            Programar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

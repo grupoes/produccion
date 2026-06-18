@@ -1,0 +1,905 @@
+<style>
+  /* Contenedor: deja que la card crezca con el calendario y permite
+     scroll interno si en algún monitor queda muy chico. */
+  #calendar {
+    min-height: 620px;
+  }
+  #calendar .fc-event {
+    cursor: pointer;
+  }
+  #calendar .fc-daygrid-event {
+    white-space: normal;
+    padding: 2px 4px;
+  }
+  #calendar .fc-toolbar-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+  /* En la vista de semana/día hace que las filas de hora
+     se expandan hasta llenar la altura disponible. */
+  #calendar .fc-timegrid {
+    min-height: 0;
+  }
+</style>
+
+<div class="row">
+  <div class="col-12">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+      <div>
+        <h3 class="fw-bold mb-1">
+          <i data-lucide="calendar-days" class="me-1 align-middle text-primary"></i>
+          Mi calendario de actividades
+        </h3>
+        <p class="text-muted mb-0">
+          <i data-lucide="user" class="me-1 align-middle"></i>
+          <span>
+            Hola, <%= (typeof authUser !== 'undefined' && authUser && authUser.persona && authUser.persona.nombres) ? authUser.persona.nombres : 'auxiliar' %>
+            — estas son tus actividades asignadas.
+          </span>
+        </p>
+      </div>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="badge bg-primary-subtle text-primary px-3 py-2 fs-xxs fw-semibold" id="badge-pendientes">
+          <i data-lucide="list-checks" class="me-1 align-middle"></i>
+          <span class="js-count-pendientes">…</span> pendientes
+        </span>
+        <span class="badge bg-success-subtle text-success px-3 py-2 fs-xxs fw-semibold" id="badge-completadas">
+          <i data-lucide="check-circle-2" class="me-1 align-middle"></i>
+          <span class="js-count-completadas">…</span> completadas
+        </span>
+        <label
+          class="d-flex align-items-center gap-1 fs-xxs text-muted ms-2 mb-0"
+          title="Hora desde donde se ve el calendario"
+        >
+          <i data-lucide="clock-3" class="align-middle" style="width:14px;height:14px"></i>
+          Ver desde
+          <input
+            type="time"
+            id="js-start-time"
+            class="form-control form-control-sm py-0 px-1"
+            style="width: 96px; font-size: 0.75rem; line-height: 1.4"
+            step="900"
+            value="07:00"
+          />
+        </label>
+        <button
+          type="button"
+          class="btn btn-sm btn-soft-secondary fs-xxs py-1 px-2"
+          id="js-now-time"
+          title="Ir a la hora actual"
+        >
+          <i data-lucide="rotate-ccw" class="me-1 align-middle" style="width:12px;height:12px"></i>
+          Ahora
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body">
+        <div id="calendar"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal de detalle de actividad -->
+<%
+  // Auxiliares de producción no ven la hora ni la duración estimada
+  // (sólo necesitan saber el qué y el contexto del prospecto).
+  const __rolNombre = (typeof authUser !== 'undefined' && authUser && authUser.rol && authUser.rol.nombre) || '';
+  const __rolNorm = String(__rolNombre).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const __esAuxProd = __rolNorm.includes('auxiliar') && __rolNorm.includes('produccion');
+  const __hideHorario = __esAuxProd;
+%>
+<div
+  id="event-modal"
+  class="modal fade"
+  tabindex="-1"
+  role="dialog"
+  aria-labelledby="modal-title"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h4 class="modal-title" id="modal-title">Detalle de actividad</h4>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+          aria-label="Close"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <!-- Columna izquierda: datos de la actividad -->
+          <div class="col-md-6">
+            <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-2">
+              Actividad
+            </h6>
+            <dl class="row mb-0 fs-sm">
+              <dt class="col-5 fw-medium text-muted">Tarea</dt>
+              <dd class="col-7" data-field="tarea">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Prioridad</dt>
+              <dd class="col-7" data-field="prioridad">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Estado</dt>
+              <dd class="col-7" data-field="estado_progreso">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Categoría</dt>
+              <dd class="col-7" data-field="categoria">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Color</dt>
+              <dd class="col-7 d-flex align-items-center gap-2" data-field="color">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Fecha</dt>
+              <dd class="col-7" data-field="fecha">—</dd>
+
+              <% if (!__hideHorario) { %>
+                <dt class="col-5 fw-medium text-muted">Hora</dt>
+                <dd class="col-7" data-field="hora">—</dd>
+
+                <dt class="col-5 fw-medium text-muted">Duración</dt>
+                <dd class="col-7" data-field="duracion">—</dd>
+              <% } %>
+
+              <dt class="col-5 fw-medium text-muted">Inicio real</dt>
+              <dd class="col-7" data-field="inicio_real">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Término real</dt>
+              <dd class="col-7" data-field="termino_real">—</dd>
+            </dl>
+          </div>
+
+          <!-- Columna derecha: datos del prospecto -->
+          <div class="col-md-6">
+            <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-2">
+              Potencial cliente
+            </h6>
+            <dl class="row mb-0 fs-sm">
+              <dt class="col-5 fw-medium text-muted">Título</dt>
+              <dd class="col-7" data-field="titulo_prospecto">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Estado cliente</dt>
+              <dd class="col-7" data-field="estado_cliente">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">F. contacto</dt>
+              <dd class="col-7" data-field="fecha_contacto">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">F. entrega</dt>
+              <dd class="col-7" data-field="fecha_entrega">—</dd>
+
+              <dt class="col-5 fw-medium text-muted">Link Drive</dt>
+              <dd class="col-7 text-break" data-field="link_drive">—</dd>
+            </dl>
+          </div>
+
+          <!-- Contenido: ancho completo -->
+          <div class="col-12" data-field-wrap="contenido" style="display:none">
+            <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-2">
+              Contenido
+            </h6>
+            <p
+              class="fs-sm mb-0"
+              data-field="contenido"
+              style="white-space: pre-wrap"
+            ></p>
+          </div>
+
+          <!-- Contactos: ancho completo -->
+          <div class="col-12" data-field-wrap="contactos" style="display:none">
+            <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-2">
+              Contactos
+            </h6>
+            <ul class="list-group list-group-flush fs-sm" data-field="contactos"></ul>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer d-flex justify-content-between flex-wrap gap-2">
+        <div class="d-flex gap-2 flex-wrap">
+          <button
+            type="button"
+            class="btn btn-success btn-sm d-none"
+            id="js-btn-start"
+            data-actividad-id=""
+          >
+            <i data-lucide="play" class="me-1 align-middle" style="width:14px;height:14px"></i>
+            Iniciar
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary btn-sm d-none"
+            id="js-btn-end"
+            data-actividad-id=""
+          >
+            <i data-lucide="check" class="me-1 align-middle" style="width:14px;height:14px"></i>
+            Terminar
+          </button>
+          <button
+            type="button"
+            class="btn btn-outline-warning btn-sm d-none"
+            id="js-btn-reprogramar"
+            data-actividad-id=""
+          >
+            <i data-lucide="calendar-clock" class="me-1 align-middle" style="width:14px;height:14px"></i>
+            Reprogramar
+          </button>
+        </div>
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal de reprogramación -->
+<div
+  id="reprogramar-modal"
+  class="modal fade"
+  tabindex="-1"
+  role="dialog"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h4 class="modal-title">Reprogramar actividad</h4>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <label class="form-label">Fecha de reprogramación</label>
+            <input type="date" class="form-control" id="js-repro-fecha" />
+          </div>
+          <div class="col-md-6 d-flex align-items-end">
+            <button type="button" class="btn btn-soft-primary" id="js-repro-simular">
+              <i data-lucide="refresh-cw" class="me-1 align-middle" style="width:14px;height:14px"></i>
+              Simular
+            </button>
+          </div>
+        </div>
+
+        <div id="js-repro-result">
+          <div class="text-center text-muted py-4">
+            <i data-lucide="info" class="mb-2" style="width:28px;height:28px"></i>
+            <div>Selecciona una fecha y presiona Simular para ver el plan.</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-primary d-none" id="js-repro-aplicar">
+          <i data-lucide="save" class="me-1 align-middle" style="width:14px;height:14px"></i>
+          Aplicar reprogramación
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    function init() {
+      if (!window.FullCalendar) return setTimeout(init, 50);
+      if (!window.bootstrap) return setTimeout(init, 50);
+
+      var calendarEl = document.getElementById("calendar");
+      var eventModalEl = document.getElementById("event-modal");
+      var modalTitle = document.getElementById("modal-title");
+      var startTimeInput = document.getElementById("js-start-time");
+      var nowTimeBtn = document.getElementById("js-now-time");
+
+      var eventModal = new bootstrap.Modal(eventModalEl, {
+        backdrop: true,
+      });
+
+      // ---- Utilidades de tiempo local --------------------------------
+      function nowHHMMSS() {
+        var d = new Date();
+        var p = function (n) { return String(n).padStart(2, "0"); };
+        return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+      }
+      function nowHHMM() {
+        var d = new Date();
+        var p = function (n) { return String(n).padStart(2, "0"); };
+        return p(d.getHours()) + ":" + p(d.getMinutes());
+      }
+      // Toma un string "HH:MM" o "HH:MM:SS" y devuelve el # de minutos
+      // desde la medianoche. null si no parsea.
+      function hmsToMin(s) {
+        if (!s) return null;
+        var m = String(s).match(/^(\d{1,2}):(\d{2})/);
+        return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+      }
+      // Minutos → "HH:MM"
+      function minToHHMM(min) {
+        var h = Math.floor(min / 60);
+        var m = min % 60;
+        return (
+          String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0")
+        );
+      }
+      // Devuelve la hora de inicio (minutos) del primer evento del
+      // calendario, o null si no hay.
+      function firstEventStartMin() {
+        var evs = calendar.getEvents();
+        var best = null;
+        for (var i = 0; i < evs.length; i++) {
+          var s = evs[i].start;
+          if (!s) continue;
+          var min = s.getHours() * 60 + s.getMinutes();
+          if (best == null || min < best) best = min;
+        }
+        return best;
+      }
+      // Decide la "hora de inicio" del calendario:
+      //   - si hay eventos: la hora del primero (restando 30 min)
+      //   - si no hay: la hora actual
+      // Devuelve minutos desde medianoche.
+      function pickStartMin() {
+        var first = firstEventStartMin();
+        if (first != null) return Math.max(0, first - 30);
+        var d = new Date();
+        return d.getHours() * 60 + d.getMinutes();
+      }
+
+      // ---- Calendario -------------------------------------------------
+      var calendar = new FullCalendar.Calendar(calendarEl, {
+        plugins: [],
+        // FullCalendar v6 ya no trae `themeSystem: "bootstrap"` (se
+        // removió en v6; v4 lo tenía, v5 tenía bootstrap/bootstrap5).
+        // Usamos el tema por defecto ("standard"), que es el único
+        // que viene en el bundle global.
+        initialView: "timeGridWeek",
+        slotDuration: "00:30:00",
+        slotMinTime: "07:00:00",
+        slotMaxTime: "20:00:00",
+        // scrollTime: a dónde se hace scroll al renderizar. Si no
+        // hay eventos en la vista, lo llevamos a la hora actual.
+        scrollTime: nowHHMMSS(),
+        // Altura dinámica: viewport menos cabecera del layout.
+        height: function () {
+          return Math.max(640, window.innerHeight - 220);
+        },
+        windowResize: function () {
+          this.setOption("height", Math.max(640, window.innerHeight - 220));
+        },
+        handleWindowResize: true,
+        expandRows: true,
+        allDaySlot: false,
+        headerToolbar: {
+          left: "prev,next today",
+          center: "title",
+          right: "timeGridWeek,timeGridDay,dayGridMonth,listWeek",
+        },
+        buttonText: {
+          today: "Hoy",
+          month: "Mes",
+          week: "Semana",
+          day: "Día",
+          list: "Lista",
+          prev: "Ant",
+          next: "Sig",
+        },
+        locale: "es",
+        firstDay: 1,
+        editable: false,
+        selectable: false,
+        events: function (info, successCallback, failureCallback) {
+          var url =
+            "/api/horario" +
+            "?desde=" +
+            encodeURIComponent(isoDate(info.start)) +
+            "&hasta=" +
+            encodeURIComponent(isoDate(info.end));
+          fetch(url, { credentials: "same-origin" })
+            .then(function (r) {
+              if (!r.ok) throw new Error("HTTP " + r.status);
+              return r.json();
+            })
+            .then(function (json) {
+              successCallback(Array.isArray(json.data) ? json.data : []);
+            })
+            .catch(function (err) {
+              console.error("No se pudieron cargar los eventos:", err);
+              failureCallback(err);
+            });
+        },
+        eventClick: function (info) {
+          showActividad(info.event);
+        },
+      });
+
+      calendar.render();
+
+      // Cuando el calendario termina de cargar (o cambiar de vista) los
+      // eventos, decidimos el scrollTime:
+      //   - si hay eventos → al primero (con 30 min de padding arriba)
+      //   - si NO hay → a la hora actual
+      // Y sincronizamos el input "Ver desde".
+      function syncScrollToContent() {
+        var min = pickStartMin();
+        var hms =
+          String(Math.floor(min / 60)).padStart(2, "0") +
+          ":" +
+          String(min % 60).padStart(2, "0") +
+          ":00";
+        calendar.setOption("scrollTime", hms);
+        if (startTimeInput) startTimeInput.value = minToHHMM(min);
+      }
+      calendar.on("eventsSet", syncScrollToContent);
+
+      // ---- Controles "Ver desde" / "Ahora" ---------------------------
+      function applyStartTime(hhmm) {
+        var min = hmsToMin(hhmm);
+        if (min == null) return;
+        // Ajustamos slotMinTime: lo bajamos al múltiplo de 30 min más
+        // cercano que sea ≤ la hora pedida, para que la rejilla de
+        // tiempo arranque exactamente en una división de slot.
+        var floored = Math.floor(min / 30) * 30;
+        var hhmmFloored = minToHHMM(floored);
+        calendar.setOption("slotMinTime", hhmmFloored);
+        calendar.setOption("scrollTime", hhmmFloored + ":00");
+        // Forzamos re-render para que tome el nuevo slotMinTime.
+        calendar.refetchEvents();
+      }
+      if (startTimeInput) {
+        startTimeInput.addEventListener("change", function () {
+          applyStartTime(startTimeInput.value);
+        });
+      }
+      if (nowTimeBtn) {
+        nowTimeBtn.addEventListener("click", function () {
+          startTimeInput.value = nowHHMM();
+          applyStartTime(nowHHMM());
+        });
+      }
+      // Seteamos el input a la hora actual en el primer render.
+      if (startTimeInput) startTimeInput.value = nowHHMM();
+
+      // Actualiza los contadores de los badges cada vez que el
+      // calendario termine de cargar los eventos.
+      function refreshBadges() {
+        var evs = calendar.getEvents();
+        var pendientes = 0;
+        var completadas = 0;
+        for (var i = 0; i < evs.length; i++) {
+          var estado = (evs[i].extendedProps || {}).estado_progreso;
+          if (estado === "completada" || estado === "completado") {
+            completadas++;
+          } else {
+            pendientes++;
+          }
+        }
+        var $p = document.querySelector(".js-count-pendientes");
+        var $c = document.querySelector(".js-count-completadas");
+        if ($p) $p.textContent = pendientes;
+        if ($c) $c.textContent = completadas;
+      }
+      calendar.on("eventsSet", refreshBadges);
+
+      // ---------------- Modal de detalle -----------------------------
+      function setField(name, value) {
+        var el = eventModalEl.querySelector('[data-field="' + name + '"]');
+        if (!el) return;
+        if (value === null || value === undefined || value === "") {
+          el.textContent = "—";
+          return;
+        }
+        el.textContent = value;
+      }
+
+      function setFieldHTML(name, html) {
+        var el = eventModalEl.querySelector('[data-field="' + name + '"]');
+        if (!el) return;
+        if (html === null || html === undefined || html === "") {
+          el.textContent = "—";
+          return;
+        }
+        el.innerHTML = html;
+      }
+
+      function setWrap(name, show) {
+        var el = eventModalEl.querySelector(
+          '[data-field-wrap="' + name + '"]',
+        );
+        if (el) el.style.display = show ? "" : "none";
+      }
+
+      function formatDate(v) {
+        if (!v) return "—";
+        var d = v instanceof Date ? v : new Date(v);
+        if (Number.isNaN(d.getTime())) return "—";
+        var p = function (n) { return String(n).padStart(2, "0"); };
+        return p(d.getDate()) + "/" + p(d.getMonth() + 1) + "/" + d.getFullYear();
+      }
+
+      function trimSeconds(hms) {
+        if (!hms) return "";
+        return String(hms).slice(0, 5); // "HH:MM:SS" -> "HH:MM"
+      }
+
+      function prioridadBadge(p) {
+        if (!p) return '<span class="text-muted">—</span>';
+        var cls =
+          p === "ALTA"
+            ? "bg-danger-subtle text-danger"
+            : p === "MEDIA"
+              ? "bg-warning-subtle text-warning"
+              : "bg-secondary-subtle text-secondary";
+        return (
+          '<span class="badge ' + cls + ' px-2 py-1 fw-semibold">' +
+          escapeHtml(p) +
+          "</span>"
+        );
+      }
+
+      function estadoBadge(e) {
+        if (!e) return '<span class="text-muted">—</span>';
+        var norm = String(e).toLowerCase();
+        var cls =
+          norm === "completada" || norm === "completado"
+            ? "bg-success-subtle text-success"
+            : norm === "en_progreso" || norm === "en curso"
+              ? "bg-info-subtle text-info"
+              : "bg-primary-subtle text-primary";
+        return (
+          '<span class="badge ' + cls + ' px-2 py-1 fw-semibold">' +
+          escapeHtml(e) +
+          "</span>"
+        );
+      }
+
+      function escapeHtml(s) {
+        return String(s == null ? "" : s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function showActividad(ev) {
+        var p = ev.extendedProps || {};
+        // Título con un swatch del color si la actividad tiene uno.
+        var swatch = "";
+        if (p.color) {
+          swatch =
+            '<span class="d-inline-block rounded-circle me-2 align-middle" style="width:14px;height:14px;background:' +
+            escapeHtml(p.color) +
+            ';border:1px solid rgba(0,0,0,.1)"></span>';
+        }
+        modalTitle.innerHTML = swatch + escapeHtml(ev.title || "Detalle de actividad");
+
+        // Columna izquierda: Actividad
+        setField("tarea", p.tarea);
+        setFieldHTML("prioridad", prioridadBadge(p.prioridad));
+        setFieldHTML("estado_progreso", estadoBadge(p.estado_progreso));
+        setField("categoria", p.categoria);
+        if (p.color) {
+          setFieldHTML(
+            "color",
+            '<span class="rounded-circle d-inline-block" style="width:18px;height:18px;background:' +
+              escapeHtml(p.color) +
+              ';border:1px solid rgba(0,0,0,.1)"></span>' +
+              '<code class="text-muted small">' + escapeHtml(p.color) + "</code>",
+          );
+        } else {
+          setField("color", "—");
+        }
+        setField("fecha", p.fecha);
+        var horaTxt =
+          trimSeconds(p.hora_inicio) +
+          (p.hora_fin ? " — " + trimSeconds(p.hora_fin) : "");
+        setField("hora", horaTxt || "—");
+        if (p.duracion_minutos) {
+          var totalMin = Number(p.duracion_minutos);
+          var horas = Math.floor(totalMin / 60);
+          var mins = totalMin % 60;
+          var durTxt;
+          if (horas > 0 && mins > 0) durTxt = horas + " h " + mins + " min";
+          else if (horas > 0) durTxt = horas + " h";
+          else durTxt = mins + " min";
+          setField("duracion", durTxt);
+        } else {
+          setField("duracion", "—");
+        }
+
+        // Columna derecha: Potencial cliente
+        setField("titulo_prospecto", p.titulo_prospecto);
+        setField("estado_cliente", p.estado_cliente);
+        setField("fecha_contacto", formatDate(p.fecha_contacto));
+        setField("fecha_entrega", formatDate(p.fecha_entrega));
+        if (p.link_drive) {
+          setFieldHTML(
+            "link_drive",
+            '<a href="' +
+              escapeHtml(p.link_drive) +
+              '" target="_blank" rel="noopener" class="link-primary text-break">' +
+              escapeHtml(p.link_drive) +
+              "</a>",
+          );
+        } else {
+          setField("link_drive", null);
+        }
+
+        // Contenido
+        if (p.contenido && String(p.contenido).trim()) {
+          setWrap("contenido", true);
+          setField("contenido", p.contenido);
+        } else {
+          setWrap("contenido", false);
+        }
+
+        // Contactos
+        var contactos = Array.isArray(p.contactos) ? p.contactos : [];
+        if (contactos.length) {
+          setWrap("contactos", true);
+          var html = contactos
+            .map(function (c) {
+              var nombre = [c.nombres, c.apellidos]
+                .filter(Boolean)
+                .join(" ")
+                .trim();
+              var tel = c.celular
+                ? '<a href="tel:' +
+                  escapeHtml(c.celular) +
+                  '" class="link-primary ms-2"><i data-lucide="phone" class="me-1 align-middle" style="width:14px;height:14px"></i>' +
+                  escapeHtml(c.celular) +
+                  "</a>"
+                : "";
+              return (
+                '<li class="list-group-item d-flex flex-wrap align-items-center gap-1 px-0">' +
+                '<span class="fw-medium">' +
+                escapeHtml(nombre || "—") +
+                "</span>" +
+                tel +
+                "</li>"
+              );
+            })
+            .join("");
+          setFieldHTML("contactos", html);
+        } else {
+          setWrap("contactos", false);
+        }
+
+        // Refresca los íconos lucide que se acaban de inyectar.
+        if (window.lucide && typeof window.lucide.createIcons === "function") {
+          try { window.lucide.createIcons(); } catch (_) {}
+        }
+
+        // Inicio / término real (Start / End)
+        var iniReal = p.fecha_inicio_real && p.hora_inicio_real
+          ? trimSeconds(p.hora_inicio_real) + " (" + p.fecha_inicio_real + ")"
+          : null;
+        var finReal = p.fecha_termino_real && p.hora_termino_real
+          ? trimSeconds(p.hora_termino_real) + " (" + p.fecha_termino_real + ")"
+          : null;
+        showField("inicio_real", iniReal);
+        showField("termino_real", finReal);
+
+        // Visibilidad de los botones de acción según dueño / estado.
+        applyAccionesButtons(p);
+
+        eventModal.show();
+      }
+
+      // ---- Start / End / Reprogramar ------------------------------
+      // Decidir visibilidad de los botones según dueño + fecha + estado.
+      var btnStart = document.getElementById("js-btn-start");
+      var btnEnd = document.getElementById("js-btn-end");
+      var btnRepro = document.getElementById("js-btn-reprogramar");
+
+      function todayLocalYYYYMMDD() {
+        var d = new Date();
+        var p = function (n) { return String(n).padStart(2, "0"); };
+        return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+      }
+
+      function applyAccionesButtons(extendedProps) {
+        var p = extendedProps || {};
+        var estado = String(p.estado_progreso || "pendiente").toLowerCase();
+        var hoy = todayLocalYYYYMMDD();
+        // dueño = el usuario logueado es el asignado a la actividad
+        var dueno = (typeof authUser !== 'undefined' && authUser) ? Number(authUser.id) : null;
+        var esDueno = dueno != null && p.actividad_id && p.usuario_id === dueno;
+        // ¿es ALTA? lo deduce de la prioridad (bloqueada se mapea a ALTA)
+        var esAlta = String(p.prioridad || "").toUpperCase() === "ALTA";
+
+        if (btnStart) {
+          var canStart = esDueno && estado !== "completada" && !p.fecha_inicio_real;
+          btnStart.classList.toggle("d-none", !canStart);
+          btnStart.dataset.actividadId = p.actividad_id || "";
+        }
+        if (btnEnd) {
+          var canEnd = esDueno && estado === "en_progreso" && p.fecha_inicio_real && !p.fecha_termino_real;
+          btnEnd.classList.toggle("d-none", !canEnd);
+          btnEnd.dataset.actividadId = p.actividad_id || "";
+        }
+        if (btnRepro) {
+          // Permitimos reprogramar mientras no esté completada. El backend
+          // rechaza ALTA contra chocar con otra ALTA, pero el botón queda
+          // visible para que el auxiliar pueda intentarlo.
+          var canRepro = !!p.actividad_id && estado !== "completada";
+          btnRepro.classList.toggle("d-none", !canRepro);
+          btnRepro.dataset.actividadId = p.actividad_id || "";
+        }
+      }
+
+      function showField(name, value) {
+        var el = eventModalEl.querySelector('[data-field="' + name + '"]');
+        if (el) el.textContent = value || "—";
+      }
+
+      function callAccion(actividadId, accion) {
+        if (!actividadId) return;
+        var url = "/api/actividades/" + encodeURIComponent(actividadId) + "/" + accion;
+        fetch(url, { method: "POST", credentials: "same-origin" })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (res) {
+            if (!res.ok) throw new Error((res.j && res.j.error) || "Error");
+            // Refrescamos el calendario y reabrimos el modal con datos frescos.
+            calendar.refetchEvents();
+            eventModal.hide();
+          })
+          .catch(function (err) {
+            alert(err.message || "Error en la operación.");
+          });
+      }
+
+      if (btnStart) btnStart.addEventListener("click", function () { callAccion(btnStart.dataset.actividadId, "start"); });
+      if (btnEnd)   btnEnd.addEventListener("click",   function () { callAccion(btnEnd.dataset.actividadId, "end"); });
+      if (btnRepro) btnRepro.addEventListener("click", function () {
+        openReprogramarModal(Number(btnRepro.dataset.actividadId));
+      });
+
+      // ---- Modal de reprogramación --------------------------------
+      var reproModalEl = document.getElementById("reprogramar-modal");
+      var reproModal = reproModalEl ? new bootstrap.Modal(reproModalEl) : null;
+      var reproFecha = document.getElementById("js-repro-fecha");
+      var reproSimular = document.getElementById("js-repro-simular");
+      var reproAplicar = document.getElementById("js-repro-aplicar");
+      var reproResult = document.getElementById("js-repro-result");
+      var reproActividadId = null;
+      var reproLastPlan = null;
+
+      function openReprogramarModal(actividadId) {
+        reproActividadId = actividadId;
+        reproFecha.value = todayLocalYYYYMMDD();
+        reproResult.innerHTML = '<div class="text-center text-muted py-4">Selecciona una fecha y presiona Simular.</div>';
+        reproAplicar.classList.add("d-none");
+        reproLastPlan = null;
+        reproModal.show();
+        if (window.lucide) { try { window.lucide.createIcons(); } catch (_) {} }
+        // Simulamos de una vez con la fecha default
+        simularRepro();
+      }
+
+      function escapeHtml2(s) {
+        return String(s == null ? "" : s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function renderPlan(plan) {
+        if (!plan || !plan.fits) {
+          var s = (plan && plan.suggestions) || {};
+          var otras = (s.otherAuxiliares || []).map(function (a) {
+            return '<li class="list-group-item d-flex justify-content-between align-items-center">' +
+                   '<span><i class="ti ti-user me-1 text-primary"></i>' + escapeHtml2(a.nombre) + '</span>' +
+                   '<span class="badge bg-primary-subtle text-primary">' + escapeHtml2(a.slot.hi) + ' — ' + escapeHtml2(a.slot.hf) + '</span>' +
+                   '</li>';
+          }).join("");
+          var he = s.horasExtras || null;
+          var mover = s.moverDeadline || null;
+          return '<div class="alert alert-warning">' +
+                 '<i data-lucide="alert-triangle" class="me-1 align-middle" style="width:16px;height:16px"></i>' +
+                 '<strong>No entra</strong> en la fecha seleccionada.' +
+                 (plan && plan.reason ? ' <small class="text-muted">(' + escapeHtml2(plan.reason) + ')</small>' : '') +
+                 '</div>' +
+                 (otras ? '<h6 class="fs-xxs text-uppercase text-muted fw-semibold">Otros auxiliares con hueco</h6><ul class="list-group list-group-flush mb-3">' + otras + '</ul>' : '') +
+                 (he ? '<div class="alert alert-info py-2 mb-2"><i data-lucide="clock-plus" class="me-1 align-middle" style="width:14px;height:14px"></i>Como horas extras: <strong>' + escapeHtml2(he.texto) + '</strong></div>' : '') +
+                 (mover ? '<div class="alert alert-secondary py-2 mb-0"><i data-lucide="calendar-arrow-down" class="me-1 align-middle" style="width:14px;height:14px"></i>O correr el deadline al <strong>' + escapeHtml2(String(mover.fecha_sugerida).slice(0,10)) + '</strong></div>' : '');
+        }
+        var moves = (plan.moves || []).map(function (m) {
+          return '<li class="list-group-item d-flex justify-content-between align-items-center">' +
+                 '<span>Actividad #' + escapeHtml2(m.actividad_id) + '</span>' +
+                 '<span class="badge bg-warning-subtle text-warning">' + escapeHtml2(m.hi) + ' — ' + escapeHtml2(m.hf) + '</span>' +
+                 '</li>';
+        }).join("");
+        return '<div class="alert alert-success">' +
+               '<i data-lucide="check-circle-2" class="me-1 align-middle" style="width:16px;height:16px"></i>' +
+               '<strong>Entra</strong> — ' + escapeHtml2(plan.reason || "") + '.<br>' +
+               '<span class="small">Slot propuesto: <strong>' + escapeHtml2(plan.slot.hi) + ' — ' + escapeHtml2(plan.slot.hf) + '</strong></span>' +
+               '</div>' +
+               (moves ? '<h6 class="fs-xxs text-uppercase text-muted fw-semibold">Actividades a mover</h6><ul class="list-group list-group-flush">' + moves + '</ul>' : '<p class="text-muted small mb-0">No hay que mover nada.</p>');
+      }
+
+      function simularRepro() {
+        if (!reproActividadId || !reproFecha.value) return;
+        reproResult.innerHTML = '<div class="text-center text-muted py-4">Calculando…</div>';
+        fetch("/api/horario/sugerir", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            actividad_id: reproActividadId,
+            fecha: reproFecha.value,
+          }),
+        })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (res) {
+            reproLastPlan = res.j && res.j.success ? (res.j.plan || res.j) : null;
+            // Para que el renderPlan reciba un objeto unificado:
+            var unificado = res.j.success ? (res.j.fits ? { fits: true, plan: res.j.plan } : { fits: false, reason: res.j.reason, suggestions: res.j.suggestions }) : { fits: false, reason: (res.j && res.j.error) || "Error" };
+            if (res.j.success) {
+              reproResult.innerHTML = res.j.fits ? renderPlan(res.j.plan) : renderPlan(unificado);
+              reproAplicar.classList.toggle("d-none", !res.j.fits);
+            } else {
+              reproResult.innerHTML = '<div class="alert alert-danger">' + escapeHtml2((res.j && res.j.error) || "Error") + '</div>';
+              reproAplicar.classList.add("d-none");
+            }
+            if (window.lucide) { try { window.lucide.createIcons(); } catch (_) {} }
+          })
+          .catch(function (err) {
+            reproResult.innerHTML = '<div class="alert alert-danger">' + escapeHtml2(err.message || "Error") + '</div>';
+          });
+      }
+
+      if (reproSimular) reproSimular.addEventListener("click", simularRepro);
+      if (reproFecha) reproFecha.addEventListener("change", simularRepro);
+
+      if (reproAplicar) reproAplicar.addEventListener("click", function () {
+        if (!reproActividadId) return;
+        var motivo = prompt("Motivo de la reprogramación (opcional):", "") || "";
+        reproAplicar.disabled = true;
+        fetch("/api/horario/reprogramar", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            actividad_id: reproActividadId,
+            fecha_destino: reproFecha.value,
+            motivo: motivo,
+          }),
+        })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (res) {
+            if (!res.ok) throw new Error((res.j && res.j.error) || "Error");
+            reproModal.hide();
+            eventModal.hide();
+            calendar.refetchEvents();
+          })
+          .catch(function (err) {
+            alert(err.message || "Error al reprogramar.");
+          })
+          .finally(function () { reproAplicar.disabled = false; });
+      });
+    }
+
+    function isoDate(d) {
+      var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
+      return (
+        d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
+      );
+    }
+
+    // FullCalendar se carga vía el bloque `script` del layout (al final del body).
+    // Esperamos a `load` para garantizar que ya esté disponible.
+    if (document.readyState === "complete") {
+      init();
+    } else {
+      window.addEventListener("load", init);
+    }
+  })();
+</script>

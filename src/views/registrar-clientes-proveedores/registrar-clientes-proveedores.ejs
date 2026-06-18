@@ -1,0 +1,137 @@
+<div class="row justify-content-center py-3">
+  <div class="col-xxl-5 col-xl-7 text-center">
+    <h3 class="fw-bold">Registrar Clientes de Proveedor</h3>
+    <p class="text-muted mb-0">
+      Clientes que ya nos llegan cerrados por un proveedor externo. Se registran
+      como clientes desde el inicio, con su tarea pendiente (sin agendar).
+    </p>
+  </div>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="card-title">Datos del cliente</h5>
+      </div>
+      <div class="card-body">
+        <form id="form-cliente-proveedor" novalidate>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">Proveedor <span class="text-danger">*</span></label>
+              <select class="form-select" name="proveedor_id" id="js-cp-proveedor" required>
+                <option value="">Cargando…</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Título del trabajo <span class="text-danger">*</span></label>
+              <input
+                type="text"
+                class="form-control"
+                name="titulo_prospecto"
+                maxlength="255"
+                placeholder="Ej. Diseño de marca - Empresa X"
+                required
+              />
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Universidad</label>
+              <select class="form-select" name="institucion_id" id="js-cp-institucion">
+                <option value="">Seleccione una universidad</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Carrera</label>
+              <select class="form-select" name="carrera_id" id="js-cp-carrera" disabled>
+                <option value="">Seleccione universidad primero</option>
+              </select>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Nivel académico</label>
+              <select class="form-select" name="nivel_academico_id" id="js-cp-nivel">
+                <option value="">Seleccione un nivel</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Prioridad</label>
+              <select class="form-select" name="prioridad" id="js-cp-prioridad">
+                <option value="">—</option>
+                <option value="ALTA">Alta</option>
+                <option value="MEDIA">Media</option>
+                <option value="BAJA">Baja</option>
+              </select>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label">Fecha de entrega <span class="text-danger">*</span></label>
+              <input type="date" class="form-control" name="fecha_entrega" required />
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Link Drive</label>
+              <input
+                type="url"
+                class="form-control"
+                name="link_drive"
+                maxlength="150"
+                placeholder="https://drive.google.com/..."
+              />
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">Observaciones y detalles</label>
+              <textarea
+                class="form-control"
+                name="contenido"
+                rows="3"
+                placeholder="Notas, contexto, detalles del cliente…"
+              ></textarea>
+            </div>
+          </div>
+
+          <hr class="my-4" />
+
+          <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-3">Contactos del cliente (opcional)</h6>
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <small class="text-muted">Si agregas un contacto, el celular es obligatorio.</small>
+            <button type="button" id="js-cp-add-contacto" class="btn btn-sm btn-outline-primary">
+              <i class="ti ti-plus me-1"></i> Agregar contacto
+            </button>
+          </div>
+          <div id="js-cp-contactos-list"></div>
+          <div class="text-center text-muted py-3" id="js-cp-contactos-empty">
+            Aún no hay contactos. Haz clic en "Agregar contacto".
+          </div>
+
+          <hr class="my-4" />
+
+          <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-3">Tarea</h6>
+          <div class="row g-3">
+            <div class="col-md-8">
+              <label class="form-label">Tarea <span class="text-danger">*</span></label>
+              <select class="form-select" name="tarea_id" id="js-cp-tarea" required>
+                <option value="">Seleccione una tarea</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Tiempo estimado (min) <span class="text-danger">*</span></label>
+              <input type="number" class="form-control" name="tiempo_estimado_minutos" id="js-cp-duracion" min="5" step="5" value="60" required />
+            </div>
+            <div class="col-12">
+              <small class="text-muted">Se crea la actividad en estado <strong>pendiente</strong>, sin asignar a calendario.</small>
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-end gap-2 mt-4">
+            <button type="button" class="btn btn-light" id="js-cp-limpiar">Limpiar</button>
+            <button type="submit" class="btn btn-primary" id="js-cp-guardar">
+              <i class="ti ti-check me-1 align-middle"></i>
+              Registrar cliente
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

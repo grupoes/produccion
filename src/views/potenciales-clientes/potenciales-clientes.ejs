@@ -1,0 +1,221 @@
+<div class="row justify-content-center py-3">
+  <div class="col-xxl-5 col-xl-7 text-center">
+    <h3 class="fw-bold">Potenciales Clientes</h3>
+    <p class="text-muted mb-0">
+      Registra un potencial cliente y asígnale una tarea.
+    </p>
+  </div>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header justify-content-between">
+        <h5 class="card-title">Listado</h5>
+        <button
+          type="button"
+          id="btn-nuevo-potencial"
+          class="btn btn-sm btn-primary"
+        >
+          <i class="ti ti-plus align-middle fs-lg me-1"></i> Nuevo
+        </button>
+      </div>
+
+      <div class="card-body">
+        <table
+          id="table-potenciales"
+          data-tables="basic"
+          class="table table-striped dt-responsive align-middle mb-0"
+        >
+          <thead class="thead-sm text-uppercase fs-xxs">
+            <tr>
+              <th>#</th>
+              <th>Título</th>
+              <th>Contactos</th>
+              <th>Universidad / Carrera</th>
+              <th>Tarea</th>
+              <th>Tipo</th>
+              <th>Prioridad</th>
+              <th>Fecha entrega</th>
+              <th class="text-center">Acciones</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <!-- end card-body-->
+    </div>
+    <!-- end card-->
+  </div>
+</div>
+
+<!-- Modal: Convertir potencial → cliente -->
+<div
+  id="convertir-modal"
+  class="modal fade"
+  tabindex="-1"
+  role="dialog"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h4 class="modal-title">
+          <i class="ti ti-arrow-up-circle me-1 align-middle text-success"></i>
+          Convertir a cliente
+        </h4>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-light border mb-3">
+          <div class="d-flex align-items-center gap-2">
+            <i class="ti ti-info-circle text-primary"></i>
+            <div>
+              <strong>Potencial cliente #<span id="js-conv-id">—</span></strong>
+              <div class="small text-muted">Pre-cargado con los datos actuales. Editá lo que quieras antes de convertir.</div>
+            </div>
+          </div>
+        </div>
+
+        <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-3">
+          <i class="ti ti-briefcase me-1"></i> Datos del trabajo
+        </h6>
+        <div class="row g-3 mb-3">
+          <div class="col-md-8">
+            <label class="form-label">Título del trabajo</label>
+            <input
+              type="text"
+              class="form-control"
+              id="js-conv-titulo-prospecto"
+              maxlength="255"
+              placeholder="Ej. Tesis de Ingeniería"
+            />
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Prioridad</label>
+            <select class="form-select" id="js-conv-prioridad">
+              <option value="">—</option>
+              <option value="ALTA">Alta</option>
+              <option value="MEDIA">Media</option>
+              <option value="BAJA">Baja</option>
+            </select>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">Universidad</label>
+            <select class="form-select" id="js-conv-institucion">
+              <option value="">Seleccione una universidad</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Carrera</label>
+            <select class="form-select" id="js-conv-carrera" disabled>
+              <option value="">Seleccione universidad primero</option>
+            </select>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">Nivel académico</label>
+            <select class="form-select" id="js-conv-nivel">
+              <option value="">Seleccione un nivel</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Fecha de entrega</label>
+            <input type="date" class="form-control" id="js-conv-fecha-entrega" />
+            <small class="text-muted">Pre-cargada con la del prospecto. Editable.</small>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">Link Drive</label>
+            <input
+              type="url"
+              class="form-control"
+              id="js-conv-link-drive"
+              maxlength="150"
+              placeholder="https://drive.google.com/..."
+            />
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Color de la actividad</label>
+            <div class="d-flex align-items-center gap-2">
+              <input
+                type="color"
+                class="form-control form-control-color p-1"
+                id="js-conv-color"
+                value="#3b82f6"
+                style="width: 56px; height: 38px;"
+              />
+              <input
+                type="text"
+                class="form-control form-control-sm"
+                id="js-conv-color-text"
+                value="#3B82F6"
+                maxlength="7"
+                style="max-width: 110px;"
+                pattern="^#([A-Fa-f0-9]{6})$"
+              />
+              <div class="d-flex flex-wrap gap-1" id="js-conv-color-presets">
+                <button type="button" class="btn btn-sm p-1 border" data-color="#dc3545" style="background:#dc3545;width:24px;height:24px" title="Rojo (alta)"></button>
+                <button type="button" class="btn btn-sm p-1 border" data-color="#f59e0b" style="background:#f59e0b;width:24px;height:24px" title="Naranja (media)"></button>
+                <button type="button" class="btn btn-sm p-1 border" data-color="#3b82f6" style="background:#3b82f6;width:24px;height:24px" title="Azul (baja)"></button>
+                <button type="button" class="btn btn-sm p-1 border" data-color="#10b981" style="background:#10b981;width:24px;height:24px" title="Verde"></button>
+                <button type="button" class="btn btn-sm p-1 border" data-color="#8b5cf6" style="background:#8b5cf6;width:24px;height:24px" title="Violeta"></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">Observaciones y detalles</label>
+            <textarea
+              class="form-control"
+              id="js-conv-contenido"
+              rows="2"
+              placeholder="Notas, contexto, detalles del cliente…"
+            ></textarea>
+          </div>
+        </div>
+
+        <hr class="my-3" />
+
+        <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-3">
+          <i class="ti ti-users me-1"></i> Contactos del cliente
+        </h6>
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <small class="text-muted">Mínimo 1 contacto. El celular es obligatorio.</small>
+          <button type="button" id="js-conv-add-contacto" class="btn btn-sm btn-outline-primary">
+            <i class="ti ti-plus me-1"></i> Agregar contacto
+          </button>
+        </div>
+        <div id="js-conv-contactos-list"></div>
+        <div class="text-center text-muted py-2" id="js-conv-contactos-empty" style="display:none;">
+          Aún no hay contactos. Haz clic en "Agregar contacto".
+        </div>
+
+        <hr class="my-3" />
+
+        <div class="row g-3">
+          <div class="col-md-12">
+            <label class="form-label">Motivo (opcional)</label>
+            <input
+              type="text"
+              class="form-control"
+              id="js-conv-motivo"
+              maxlength="255"
+              placeholder="Ej. Aceptó la cotización"
+            />
+          </div>
+        </div>
+
+        <div id="js-conv-plan" class="mt-3" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="js-conv-aplicar">
+          <i class="ti ti-check me-1 align-middle"></i>
+          Convertir
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,409 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model acciones {
+  id               Int                @id @default(autoincrement())
+  nombre_accion    String?            @db.VarChar(50)
+  estado           Boolean?
+  descripcion      String?            @db.VarChar(255)
+  acciones_modulos acciones_modulos[]
+  permisos         permisos[]
+}
+
+model acciones_modulos {
+  id        Int       @id @default(autoincrement())
+  accion_id Int?
+  modulo_id Int?
+  acciones  acciones? @relation(fields: [accion_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_am_accion")
+  modulos   modulos?  @relation(fields: [modulo_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_am_modulo")
+}
+
+model actividad_estado_historial {
+  id                Int       @id @default(autoincrement())
+  actividad_id      Int?
+  estado_progreso   String?   @db.VarChar(30)
+  fecha_inicio      DateTime? @db.Timestamptz(6)
+  fecha_fin         DateTime? @db.Timestamptz(6)
+  duracion_segundos Int?
+}
+
+model actividades {
+  id                      Int               @id @default(autoincrement())
+  prospecto_id            Int?
+  usuario_id              Int?
+  estado                  Boolean?
+  created_at              DateTime?         @db.Timestamptz(6)
+  updated_at              DateTime?         @db.Timestamptz(6)
+  prioridad               String?           @db.VarChar(30)
+  color                   String?           @db.VarChar(15)
+  estado_progreso         String?           @db.VarChar(30)
+  tarea_id                Int?
+  tiempo_estimado_minutos Int?
+  tiempo_real_minutos     Int?
+  fecha_inicio            DateTime?         @db.Date
+  hora_inicio             DateTime?         @db.Timetz(6)
+  tipo_horario            String?           @db.VarChar(50)
+  modalidad_horario       String?           @db.VarChar(50)
+  fecha_canje             DateTime?         @db.Timestamptz(6)
+  hora_inicio_canje       DateTime?         @db.Timetz(6)
+  hora_fin_canje          DateTime?         @db.Timetz(6)
+  // ----- Inicio / Término real del auxiliar (Start / End) -----
+  fecha_inicio_real       DateTime?         @db.Date
+  hora_inicio_real        DateTime?         @db.Timetz(6)
+  fecha_termino_real      DateTime?         @db.Date
+  hora_termino_real       DateTime?         @db.Timetz(6)
+  pausa_minutos           Int?              @default(0)
+  // ----- Scheduling: ALTA no se mueve -----
+  bloqueada               Boolean?          @default(false)
+  motivo_reprograma       String?           @db.VarChar(255)
+  // ----- Auditoría: quién REGISTRÓ la actividad (usuario de la sesión
+  //       que hizo POST al crear el potencial o al agregar la actividad).
+  //       NO es el asignado a la tarea (eso es `usuario_id`).
+  //       Nullable: actividades legacy pueden no tener este dato.
+  usuario_register        Int?
+  prospectos              prospectos?       @relation(fields: [prospecto_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_actividad_prospecto")
+  tarea                   tarea?            @relation(fields: [tarea_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_tarea_id")
+  horario_usuario         horario_usuario[]
+  horas_extras            horas_extras[]
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model asignacion_dias {
+  id         Int       @default(autoincrement())
+  usuario_id Int?
+  dia_id     Int?
+  dias       dias?     @relation(fields: [dia_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_dia_id")
+  usuarios   usuarios? @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_user_ad")
+
+  @@ignore
+}
+
+model carreras {
+  id             Int          @id @default(autoincrement())
+  nombre         String?      @db.VarChar(100)
+  institucion_id Int?
+  estado         Boolean?
+  institucion    institucion? @relation(fields: [institucion_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_insti_carr")
+  prospectos     prospectos[]
+}
+
+model dias {
+  id              Int               @id @default(autoincrement())
+  dia             String?           @db.VarChar(50)
+  estado          Boolean?
+  asignacion_dias asignacion_dias[] @ignore
+}
+
+model drive_links {
+  id           Int         @id @default(autoincrement())
+  usuario_id   Int?
+  prospecto_id Int?
+  link_drive   String?     @db.VarChar(150)
+  created_at   DateTime?   @db.Timetz(6)
+  prospectos   prospectos? @relation(fields: [prospecto_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_prospecto_link")
+  usuarios     usuarios?   @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_usuario_link")
+}
+
+model feriados {
+  id     Int       @id @default(autoincrement())
+  fecha  DateTime? @db.Date
+  nombre String?   @db.VarChar(150)
+  estado Boolean?
+}
+
+model ficha_enfoque {
+  id           Int         @id @default(autoincrement())
+  prospecto_id Int?
+  titulo       String?     @db.VarChar(255)
+  descripcion  String?
+  estado       Boolean?
+  prospectos   prospectos? @relation(fields: [prospecto_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_pros_enf")
+}
+
+model historial_estados_prospecto {
+  id           Int         @id @default(autoincrement())
+  prospecto_id Int?
+  estado       String?     @db.VarChar(40)
+  usuario_id   Int?
+  comentario   String?     @db.VarChar(255)
+  fecha_inicio DateTime?   @db.Timestamptz(6)
+  fecha_fin    DateTime?   @db.Timestamptz(6)
+  usuarios     usuarios?   @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_usuario_modifica")
+  prospectos   prospectos? @relation(fields: [prospecto_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "id_historial_estados")
+}
+
+model horario_jornada_detalle {
+  id          Int       @id @default(autoincrement())
+  usuario_id  Int?
+  dia_semana  Int?
+  hora_inicio DateTime? @db.Timetz(6)
+  hora_fin    DateTime? @db.Timetz(6)
+  estado      Boolean?
+  usuarios    usuarios? @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_horario_usuario")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model horario_usuario {
+  id               Int          @id @default(autoincrement())
+  actividad_id     Int?
+  fecha            DateTime?    @db.Date
+  hora_inicio      DateTime?    @db.Timetz(6)
+  hora_fin         DateTime?    @db.Timetz(6)
+  estado           Boolean?
+  created_at       DateTime?    @db.Timestamptz(6)
+  updated_at       DateTime?    @db.Timestamptz(6)
+  usuario_id       Int?
+  duracion_minutos Int?
+  tipo             String?      @db.VarChar(20)
+  orden            Int?
+  categoria        String?      @db.VarChar(50)
+  actividades      actividades? @relation(fields: [actividad_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_actividad")
+  usuarios         usuarios?    @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_usuario_horario")
+}
+
+model horas_extras {
+  id           Int          @id @default(autoincrement())
+  actividad_id Int?
+  usuario_id   Int?
+  fecha        DateTime?    @db.Date
+  minutos      String?      @db.VarChar(5)
+  tipo         String?      @db.VarChar(20)
+  estado       String?      @db.VarChar(20)
+  actividades  actividades? @relation(fields: [actividad_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_actividad_extra")
+  usuarios     usuarios?    @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_user_extra")
+}
+
+model institucion {
+  id          Int        @id @default(autoincrement())
+  nombre      String?    @db.VarChar(100)
+  abreviatura String?    @db.VarChar(100)
+  estado      Boolean?
+  sector      String?    @db.VarChar(50)
+  tipo        String?    @db.VarChar(50)
+  carreras    carreras[]
+}
+
+model modulos {
+  id               Int                @id @default(autoincrement())
+  modulo           String?            @db.VarChar(50)
+  url              String?            @db.VarChar(50)
+  icono            String?            @db.VarChar(20)
+  idpadre          Int?
+  orden            Int?
+  estado           Boolean?
+  acciones_modulos acciones_modulos[]
+  permisos         permisos[]
+}
+
+model nivel_academico {
+  id          Int          @id @default(autoincrement())
+  nombre      String?      @db.VarChar(100)
+  descripcion String?      @db.VarChar(150)
+  estado      Boolean?
+  prospectos  prospectos[]
+}
+
+model notificaciones {
+  id            Int       @id @default(autoincrement())
+  usuario_id    Int?
+  remitente_id  Int?
+  titulo        String?   @db.VarChar(100)
+  mensaje       String?   @db.VarChar(255)
+  tipo          String?   @db.VarChar(30)
+  prioridad     Int?
+  es_leida      Boolean?
+  fecha_lectura DateTime? @db.Timestamptz(6)
+  created_at    DateTime? @db.Timestamptz(6)
+  updated_at    DateTime? @db.Timestamptz(6)
+}
+
+model origen {
+  id          Int          @id @default(autoincrement())
+  nombre      String?      @db.VarChar(80)
+  descripcion String?      @db.VarChar(100)
+  estado      Boolean?
+  prospectos  prospectos[]
+}
+
+model permisos {
+  id        Int       @id @default(autoincrement())
+  modulo_id Int?
+  rol_id    Int?
+  accion_id Int?
+  acciones  acciones? @relation(fields: [accion_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_per_accion")
+  modulos   modulos?  @relation(fields: [modulo_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_per_modulo")
+  roles     roles?    @relation(fields: [rol_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_per_rol")
+}
+
+model personas {
+  id                Int                 @id @default(autoincrement())
+  nombres           String?             @db.VarChar(50)
+  apellidos         String?             @db.VarChar(50)
+  tipoDocumento_id  Int?
+  numero_documento  String?             @db.VarChar(12)
+  email             String?             @db.VarChar(50)
+  celular           String?             @db.VarChar(15)
+  direccion         String?             @db.VarChar(100)
+  estado            Boolean?
+  fecha_nacimiento  DateTime?           @db.Date
+  tipo_documento    tipo_documento?     @relation(fields: [tipoDocumento_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_tipodoc")
+  prospecto_persona prospecto_persona[]
+  usuarios          usuarios[]
+}
+
+model prospecto_persona {
+  id           Int         @id @default(autoincrement())
+  persona_id   Int?
+  prospecto_id Int?
+  personas     personas?   @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_pers")
+  prospectos   prospectos? @relation(fields: [prospecto_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_pros")
+}
+
+model proveedor {
+  id         Int          @id @default(autoincrement())
+  nombre     String?      @db.VarChar(150)
+  estado     Boolean?
+  prospectos prospectos[]
+}
+
+model prospectos {
+  id                          Int                           @id @default(autoincrement())
+  fecha_contacto              DateTime?                     @db.Date
+  origen_id                   Int?
+  usuario_venta_id            Int?
+  nivel_academico_id          Int?
+  carrera_id                  Int?
+  estado                      Boolean?
+  fecha_entrega               DateTime?                     @db.Date
+  contenido                   String?
+  created_at                  DateTime?                     @db.Timestamptz(6)
+  updated_at                  DateTime?                     @db.Timestamptz(6)
+  link_drive                  String?                       @db.VarChar(150)
+  prioridad                   String?                       @db.VarChar(30)
+  estado_cliente              String?                       @db.VarChar(50)
+  responsable_id              Int?
+  titulo_prospecto            String?                       @db.VarChar(255)
+  proveedor_id                Int?
+  actividades                 actividades[]
+  drive_links                 drive_links[]
+  ficha_enfoque               ficha_enfoque[]
+  historial_estados_prospecto historial_estados_prospecto[]
+  prospecto_persona           prospecto_persona[]
+  carreras                    carreras?                     @relation(fields: [carrera_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_carrera")
+  nivel_academico             nivel_academico?              @relation(fields: [nivel_academico_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_nivel_academico")
+  origen                      origen?                       @relation(fields: [origen_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_origen")
+  proveedor                   proveedor?                    @relation(fields: [proveedor_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_prospecto_proveedor")
+  usuarios                    usuarios?                     @relation(fields: [usuario_venta_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_user_venta")
+  resignaciones               resignaciones[]
+}
+
+model resignaciones {
+  id                                                    Int         @id @default(autoincrement())
+  usuario_id                                            Int?
+  prospecto_id                                          Int?
+  usuario_reasignar_id                                  Int?
+  estado                                                String?     @db.VarChar(30)
+  name_tarea                                            String?     @db.VarChar(200)
+  created_at                                            DateTime?   @db.Timestamptz(6)
+  updated_at                                            DateTime?   @db.Timestamptz(6)
+  fecha_reasignado                                      DateTime?   @db.Timestamptz(6)
+  usuario_id_remitente                                  Int?
+  prospectos                                            prospectos? @relation(fields: [prospecto_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_re_prospecto")
+  usuarios_resignaciones_usuario_idTousuarios           usuarios?   @relation("resignaciones_usuario_idTousuarios", fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_re_usuario")
+  usuarios_resignaciones_usuario_id_remitenteTousuarios usuarios?   @relation("resignaciones_usuario_id_remitenteTousuarios", fields: [usuario_id_remitente], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_remitente")
+}
+
+model roles {
+  id       Int        @id @default(autoincrement())
+  nombre   String?    @db.VarChar(50)
+  estado   Boolean?
+  permisos permisos[]
+  usuarios usuarios[]
+}
+
+model tarea {
+  id                                      Int           @id @default(autoincrement())
+  nombre                                  String?       @db.VarChar(150)
+  horas_estimadas                         Int?
+  estado                                  Boolean?
+  tipo_tarea                              Int?
+  aplica_en_ventas                        Boolean?      @default(true)
+  aplica_en_proyecto                      Boolean?      @default(true)
+  actividades                             actividades[]
+  tipo_tarea_tarea_tipo_tareaTotipo_tarea tipo_tarea?   @relation("tarea_tipo_tareaTotipo_tarea", fields: [tipo_tarea], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_tipo_tarea")
+}
+
+model tareas_roles {
+  id        Int      @id @default(autoincrement())
+  tarea_id  Int?
+  rol_id    Int?
+  prioridad Int?
+  estado    Boolean?
+}
+
+model tareas_usuarios {
+  id         Int       @id @default(autoincrement())
+  usuario_id Int?
+  tarea_id   Int?
+  activo     Boolean?
+  created_at DateTime? @db.Timestamptz(6)
+  updated_at DateTime? @db.Timestamptz(6)
+}
+
+model tipo_documento {
+  id          Int        @id @default(autoincrement())
+  nombre      String?    @db.VarChar(80)
+  abreviatura String?    @db.VarChar(30)
+  estado      Boolean?
+  personas    personas[]
+}
+
+model tipo_jornada {
+  id             Int        @id @default(autoincrement())
+  nombre_jornada String?    @db.VarChar
+  estado         Boolean?
+  usuarios       usuarios[]
+}
+
+model tipo_tarea {
+  id                                 Int      @id @default(autoincrement())
+  tipo                               String?  @db.VarChar(50)
+  estado                             Boolean?
+  color                              String?  @db.VarChar(10)
+  tarea_tarea_tipo_tareaTotipo_tarea tarea[]  @relation("tarea_tipo_tareaTotipo_tarea")
+}
+
+model usuarios {
+  id                                                         Int                           @id @default(autoincrement())
+  usuario                                                    String?                       @db.VarChar(50)
+  clave                                                      String?                       @db.VarChar(50)
+  persona_id                                                 Int?
+  estado                                                     Boolean?
+  rol_id                                                     Int?
+  tipo_jornada_id                                            Int?
+  asignacion_dias                                            asignacion_dias[]             @ignore
+  drive_links                                                drive_links[]
+  historial_estados_prospecto                                historial_estados_prospecto[]
+  horario_jornada_detalle                                    horario_jornada_detalle[]
+  horario_usuario                                            horario_usuario[]
+  horas_extras                                               horas_extras[]
+  prospectos                                                 prospectos[]
+  resignaciones_resignaciones_usuario_idTousuarios           resignaciones[]               @relation("resignaciones_usuario_idTousuarios")
+  resignaciones_resignaciones_usuario_id_remitenteTousuarios resignaciones[]               @relation("resignaciones_usuario_id_remitenteTousuarios")
+  tipo_jornada                                               tipo_jornada?                 @relation(fields: [tipo_jornada_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_jornada")
+  personas                                                   personas?                     @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_persona_user")
+  roles                                                      roles?                        @relation(fields: [rol_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_rol_user")
+}
+
+model Session {
+  id        String   @id
+  sid       String   @unique
+  data      String   @db.Text
+  expiresAt DateTime
+}

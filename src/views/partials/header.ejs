@@ -1,0 +1,455 @@
+<!-- Topbar Start -->
+<header class="app-topbar">
+  <div class="container-fluid topbar-menu">
+    <div class="d-flex align-items-center justify-content-center gap-2">
+      <!-- Topbar Brand Logo -->
+      <div class="logo-topbar">
+        <a href="index.html" class="logo-dark">
+          <span class="d-flex align-items-center gap-1">
+            <span class="avatar avatar-xs rounded-circle text-bg-dark">
+              <span class="avatar-title">
+                <i data-lucide="sparkles" class="fs-md"></i>
+              </span>
+            </span>
+            <span class="logo-text text-body fw-bold fs-xl">Grupo ES</span>
+          </span>
+        </a>
+        <a href="index.html" class="logo-light">
+          <span class="d-flex align-items-center gap-1">
+            <span class="avatar avatar-xs rounded-circle text-bg-dark">
+              <span class="avatar-title">
+                <i data-lucide="sparkles" class="fs-md"></i>
+              </span>
+            </span>
+            <span class="logo-text text-white fw-bold fs-xl">Vona</span>
+          </span>
+        </a>
+      </div>
+
+      <div class="d-lg-none d-flex mx-1">
+        <a href="index.html">
+          <img src="/assets/images/logo-sm.png" height="28" alt="Logo" />
+        </a>
+      </div>
+
+      <!-- Sidebar Hover Menu Toggle Button -->
+      <button class="button-collapse-toggle d-xl-none">
+        <i data-lucide="menu" class="fs-22 align-middle"></i>
+      </button>
+    </div>
+    <!-- .d-flex-->
+
+    <div class="d-flex align-items-center gap-2">
+      <!-- Theme Dropdown -->
+      <div class="topbar-item me-2">
+        <div class="dropdown" data-dropdown="custom">
+          <button
+            class="topbar-link fw-semibold"
+            data-bs-toggle="dropdown"
+            data-bs-offset="0,19"
+            type="button"
+            aria-haspopup="false"
+            aria-expanded="false"
+          >
+            <img
+              data-trigger-img
+              src="/assets/images/themes/shadcn.svg"
+              alt="user-image"
+              class="w-100 rounded me-2"
+              height="18"
+            />
+            <span data-trigger-label class="text-nowrap"> Shadcn </span>
+            <span class="dot-blink" aria-label="live status indicator"></span>
+          </button>
+          <div class="dropdown-menu dropdown-menu-lg dropdown-menu-end p-1">
+            <div class="h-100" style="max-height: 250px" data-simplebar>
+              <div class="row g-0">
+                <div class="col-md-6">
+                  <button
+                    class="dropdown-item position-relative drop-custom-active"
+                    data-skin="shadcn"
+                  >
+                    <img
+                      src="/assets/images/themes/shadcn.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Shadcn</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="corporate"
+                  >
+                    <img
+                      src="/assets/images/themes/corporate.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Corporate</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="spotify"
+                  >
+                    <img
+                      src="/assets/images/themes/spotify.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Spotify</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="saas"
+                  >
+                    <img
+                      src="/assets/images/themes/saas.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">SaaS</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="nature"
+                  >
+                    <img
+                      src="/assets/images/themes/nature.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Nature</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="vintage"
+                  >
+                    <img
+                      src="/assets/images/themes/vintage.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Vintage</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="leafline"
+                  >
+                    <img
+                      src="/assets/images/themes/leafline.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Leafline</span>
+                  </button>
+                </div>
+
+                <div class="col-md-6">
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="ghibli"
+                  >
+                    <img
+                      src="/assets/images/themes/ghibli.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Ghibli</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="slack"
+                  >
+                    <img
+                      src="/assets/images/themes/slack.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Slack</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="material"
+                  >
+                    <img
+                      src="/assets/images/themes/material.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Material Design</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="flat"
+                  >
+                    <img
+                      src="/assets/images/themes/flat.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Flat</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="pastel"
+                  >
+                    <img
+                      src="/assets/images/themes/pastel.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Pastel Pop</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="caffieine"
+                  >
+                    <img
+                      src="/assets/images/themes/caffieine.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Caffieine</span>
+                  </button>
+
+                  <button
+                    class="dropdown-item position-relative"
+                    data-skin="redshift"
+                  >
+                    <img
+                      src="/assets/images/themes/redshift.svg"
+                      alt=""
+                      class="me-1 rounded"
+                      height="18"
+                    />
+                    <span class="align-middle">Redshift</span>
+                  </button>
+                </div>
+              </div>
+              <!-- end row-->
+            </div>
+            <!-- end .h-100-->
+          </div>
+          <!-- .dropdown-menu-->
+        </div>
+        <!-- end dropdown-->
+      </div>
+      <!-- end topbar item-->
+
+      <!-- Notification Dropdown -->
+      <div class="topbar-item">
+        <div class="dropdown">
+          <button
+            id="notif-bell"
+            class="topbar-link dropdown-toggle drop-arrow-none"
+            data-bs-toggle="dropdown"
+            data-bs-offset="0,19"
+            type="button"
+            data-bs-auto-close="outside"
+            aria-haspopup="false"
+            aria-expanded="false"
+          >
+            <i data-lucide="bell" class="fs-xxl"></i>
+            <span
+              id="notif-count-badge"
+              class="badge badge-square text-bg-danger topbar-badge d-none"
+              >0</span
+            >
+          </button>
+
+          <div class="dropdown-menu p-0 dropdown-menu-end dropdown-menu-lg">
+            <div class="px-3 py-2 border-bottom">
+              <div class="row align-items-center">
+                <div class="col">
+                  <h6 class="m-0 fs-md fw-semibold">Notificaciones</h6>
+                </div>
+                <div class="col text-end">
+                  <a
+                    href="javascript:void(0);"
+                    id="notif-mark-all"
+                    class="badge text-bg-light badge-label py-1"
+                    >Marcar todas como leídas</a
+                  >
+                </div>
+              </div>
+            </div>
+
+            <div style="max-height: 320px" data-simplebar>
+              <div id="notif-list">
+                <div
+                  id="notif-empty"
+                  class="text-center text-muted py-4 fs-sm"
+                >
+                  <i
+                    data-lucide="bell-off"
+                    class="fs-22 d-block mx-auto mb-1"
+                  ></i>
+                  Sin notificaciones por ahora
+                </div>
+              </div>
+            </div>
+            <!-- end dropdown -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Light/Dark Mode Button -->
+      <div class="topbar-item d-none d-sm-flex">
+        <button class="topbar-link" id="light-dark-mode" type="button">
+          <i data-lucide="moon" class="fs-xxl mode-light-moon"></i>
+          <i data-lucide="sun" class="fs-xxl mode-light-sun"></i>
+        </button>
+      </div>
+
+      <!-- User Dropdown -->
+      <div class="topbar-item nav-user">
+        <div class="dropdown">
+          <a
+            class="topbar-link dropdown-toggle drop-arrow-none px-2"
+            data-bs-toggle="dropdown"
+            data-bs-offset="0,13"
+            href="#!"
+            aria-haspopup="false"
+            aria-expanded="false"
+          >
+            <img
+              src="/assets/images/users/user-2.jpg"
+              width="32"
+              class="rounded-circle d-flex"
+              alt="user-image"
+            />
+          </a>
+          <div class="dropdown-menu dropdown-menu-end">
+            <!-- Header -->
+            <div class="dropdown-header noti-title">
+              <h6 class="text-overflow m-0">Bienvenido de Nuevo!</h6>
+            </div>
+
+            <!-- My Profile -->
+            <a href="#!" class="dropdown-item">
+              <i class="ti ti-user-circle me-2 fs-17 align-middle"></i>
+              <span class="align-middle">Profile</span>
+            </a>
+
+            <!-- Notifications -->
+            <a href="javascript:void(0);" class="dropdown-item">
+              <i class="ti ti-bell-ringing me-2 fs-17 align-middle"></i>
+              <span class="align-middle">Notifications</span>
+            </a>
+
+            <!-- Wallet -->
+            <a href="javascript:void(0);" class="dropdown-item">
+              <i class="ti ti-credit-card me-2 fs-17 align-middle"></i>
+              <span class="align-middle"
+                >Balance: <span class="fw-semibold">$985.25</span></span
+              >
+            </a>
+
+            <!-- Settings -->
+            <a href="javascript:void(0);" class="dropdown-item">
+              <i class="ti ti-settings-2 me-2 fs-17 align-middle"></i>
+              <span class="align-middle">Account Settings</span>
+            </a>
+
+            <!-- Support -->
+            <a href="javascript:void(0);" class="dropdown-item">
+              <i class="ti ti-headset me-2 fs-17 align-middle"></i>
+              <span class="align-middle">Support Center</span>
+            </a>
+
+            <!-- Divider -->
+            <div class="dropdown-divider"></div>
+
+            <!-- Lock -->
+            <a href="auth-lock-screen.html" class="dropdown-item">
+              <i class="ti ti-lock me-2 fs-17 align-middle"></i>
+              <span class="align-middle">Lock Screen</span>
+            </a>
+
+            <!-- Logout -->
+            <a
+              href="javascript:void(0);"
+              id="logoutButton"
+              class="dropdown-item text-danger fw-semibold"
+            >
+              <i class="ti ti-logout-2 me-2 fs-17 align-middle"></i>
+              <span class="align-middle">Log Out</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+<!-- Topbar End -->
+
+<script>
+  // Skin Dropdown
+  document.querySelectorAll('[data-dropdown="custom"]').forEach((dropdown) => {
+    const trigger = dropdown.querySelector(
+      'a[data-bs-toggle="dropdown"], button[data-bs-toggle="dropdown"]',
+    );
+    const items = dropdown.querySelectorAll("button[data-skin]");
+
+    const triggerImg = trigger.querySelector("[data-trigger-img]");
+    const triggerLabel = trigger.querySelector("[data-trigger-label]");
+
+    const config = JSON.parse(JSON.stringify(window.config));
+    const currentSkin = config.skin;
+
+    items.forEach((item) => {
+      const itemSkin = item.getAttribute("data-skin");
+      const itemImg = item.querySelector("img")?.getAttribute("src");
+      const itemText = item.querySelector("span")?.textContent.trim();
+
+      // Set active on load
+      if (itemSkin === currentSkin) {
+        item.classList.add("drop-custom-active");
+        if (triggerImg && itemImg) triggerImg.setAttribute("src", itemImg);
+        if (triggerLabel && itemText) triggerLabel.textContent = itemText;
+      } else {
+        item.classList.remove("drop-custom-active");
+      }
+
+      // Click handler
+      item.addEventListener("click", function () {
+        items.forEach((i) => i.classList.remove("drop-custom-active"));
+        this.classList.add("drop-custom-active");
+
+        const newImg = this.querySelector("img")?.getAttribute("src");
+        const newText = this.querySelector("span")?.textContent.trim();
+
+        if (triggerImg && newImg) triggerImg.setAttribute("src", newImg);
+        if (triggerLabel && newText) triggerLabel.textContent = newText;
+
+        if (typeof layoutCustomizer !== "undefined") {
+          layoutCustomizer.changeSkin(itemSkin);
+        }
+      });
+    });
+  });
+</script>

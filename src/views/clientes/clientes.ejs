@@ -1,0 +1,72 @@
+<div class="row justify-content-center py-3">
+  <div class="col-xxl-5 col-xl-7 text-center">
+    <h3 class="fw-bold">Clientes</h3>
+    <p class="text-muted mb-0">
+      Clientes convertidos desde un potencial, o registrados directamente como
+      clientes de proveedor.
+    </p>
+  </div>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header justify-content-between">
+        <h5 class="card-title">Listado de clientes</h5>
+        <span class="badge bg-primary-subtle text-primary" id="clientes-count">0</span>
+      </div>
+
+      <div class="card-body">
+        <table
+          id="table-clientes"
+          data-tables="basic"
+          class="table table-striped dt-responsive align-middle mb-0"
+        >
+          <thead class="thead-sm text-uppercase fs-xxs">
+            <tr>
+              <th>#</th>
+              <th>Título</th>
+              <th>Contactos</th>
+              <th>Universidad / Carrera</th>
+              <th>Tarea</th>
+              <th>Tipo</th>
+              <th>Prioridad</th>
+              <th>Fecha entrega</th>
+              <th class="text-center">Acciones</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <!-- end card-body-->
+    </div>
+    <!-- end card-->
+  </div>
+</div>
+
+<!-- Modal: Ver detalle del cliente -->
+<div
+  id="cliente-detalle-modal"
+  class="modal fade"
+  tabindex="-1"
+  role="dialog"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h4 class="modal-title">
+          <i class="ti ti-eye me-1 align-middle text-primary"></i>
+          Detalle del cliente
+        </h4>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="js-cli-detalle-body">
+        <div class="text-center text-muted py-4">Cargando…</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>

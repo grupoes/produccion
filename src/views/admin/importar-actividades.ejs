@@ -1,0 +1,154 @@
+<div class="row">
+  <div class="col-12">
+    <div class="page-title-box">
+      <h4 class="page-title">Importar Actividades desde Excel</h4>
+      <p class="text-muted">
+        Sube un archivo Excel con los datos de los clientes y sus actividades.
+        El sistema asignará automáticamente el horario disponible respetando la
+        jornada laboral, feriados y cumpleaños del usuario seleccionado.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- Paso 1: Seleccionar usuario y subir archivo -->
+<div class="row" id="step-upload">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title mb-3">1. Selecciona el usuario y sube el Excel</h5>
+
+        <div class="mb-3">
+          <label for="usuario-select" class="form-label">Usuario asignado <span class="text-danger">*</span></label>
+          <select id="usuario-select" class="form-select">
+            <option value="">Cargando usuarios...</option>
+          </select>
+          <div class="form-text">
+            Las actividades se agendarán en el horario de este usuario,
+            respetando su jornada, feriados y cumpleaños.
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="excel-file" class="form-label">Archivo Excel (.xlsx) <span class="text-danger">*</span></label>
+          <input type="file" id="excel-file" class="form-control" accept=".xlsx,.xls" />
+          <div class="form-text">
+            <strong>Columnas del Excel:</strong>
+            <code>CLIENTE</code> (nombre completo),
+            <code>CELULAR</code>,
+            <code>DESCRIPCION</code> (descripción del trabajo),
+            <code>UNIVERSIDAD</code>,
+            <code>CARRERA</code>,
+            <code>NIVEL</code> (PREGRADO/POSGRADO),
+            <code>LINK - CARPETA</code>,
+            <code>FECHA DE ENTREGA</code>.
+            <br />
+            En la vista previa podrás revisar y ajustar el mapeo de cada
+            columna con los catálogos del sistema.
+          </div>
+        </div>
+
+        <div id="sheet-mapping" class="mb-3 d-none">
+          <label class="form-label">Vendedor que registró cada hoja</label>
+          <div class="form-text mb-2">
+            Cada hoja del Excel corresponde a un vendedor que captó los clientes.
+            Selecciona quién registró cada hoja.
+          </div>
+          <div id="sheet-mapping-list"></div>
+        </div>
+
+        <button id="btn-preview" class="btn btn-primary" disabled>
+          <i class="ti ti-eye me-1"></i> Vista Previa
+        </button>
+        <div id="preview-spinner" class="spinner-border spinner-border-sm text-primary d-none ms-2" role="status">
+          <span class="visually-hidden">Procesando...</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Paso 2: Vista previa -->
+<div class="row d-none" id="step-preview">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="card-title mb-0">2. Vista previa de importación</h5>
+          <div>
+            <span id="preview-count" class="badge bg-info fs-6 me-2"></span>
+            <span id="preview-errors" class="badge bg-danger fs-6"></span>
+          </div>
+        </div>
+
+        <div class="alert alert-info">
+          <i class="ti ti-info-circle me-1"></i>
+          Revisa los valores pre-seleccionados. El sistema intentó emparejar
+          automáticamente universidad, carrera y nivel académico con los
+          catálogos existentes. Puedes cambiarlos con los selectores.
+          <br />
+          <strong>Tarea:</strong> selecciona manualmente la tarea según la
+          descripción del trabajo.
+        </div>
+
+        <!-- Tabs por hoja -->
+        <ul class="nav nav-tabs nav-bordered mb-3" id="sheet-tabs" role="tablist"></ul>
+        <div class="tab-content" id="sheet-tab-content"></div>
+
+        <div class="alert alert-warning d-none" id="preview-errors-alert">
+          <i class="ti ti-alert-triangle me-1"></i>
+          <span id="preview-errors-text"></span>
+        </div>
+
+        <button id="btn-back" class="btn btn-secondary">
+          <i class="ti ti-arrow-left me-1"></i> Volver
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Paso 3: Resultado -->
+<div class="row d-none" id="step-result">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title mb-3">3. Resultado de la importación</h5>
+        <div id="result-content"></div>
+        <button id="btn-reset" class="btn btn-primary mt-3">
+          <i class="ti ti-refresh me-1"></i> Nueva Importación
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/assets/plugins/choices/choices.min.js"></script>
+
+<!-- Modal: Agregar carrera -->
+<div class="modal fade" id="modal-agregar-carrera" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Agregar Carrera</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Universidad</label>
+          <select id="carrera-modal-universidad" class="form-select"></select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Nombre de la Carrera <span class="text-danger">*</span></label>
+          <input type="text" id="carrera-modal-nombre" class="form-control" placeholder="Ej: Ingeniería Civil">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" id="btn-guardar-carrera" class="btn btn-primary">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/admin/importar-actividades.js?v=<%= Date.now() %>"></script>

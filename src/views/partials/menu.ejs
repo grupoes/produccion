@@ -1,0 +1,52 @@
+<%
+  const modulesList = typeof modules !== 'undefined' ? modules : (locals.modules || []);
+  const topModules = modulesList.filter((m) => !m.idpadre);
+%>
+
+<ul class="side-nav">
+  <li class="side-nav-item">
+    <a href="/admin" class="side-nav-link">
+      <span class="menu-icon"><i data-lucide="circle-gauge"></i></span>
+      <span class="menu-text" data-lang="dashboard">Dashboard</span>
+    </a>
+  </li>
+  <% if (topModules.length) { %>
+    <% topModules.forEach((parent) => {
+         const children = modulesList.filter((c) => c.idpadre === parent.id);
+    %>
+      <li class="side-nav-item">
+        <% if (children.length) { %>
+          <a data-bs-toggle="collapse" href="#module-<%= parent.id %>" aria-expanded="false" aria-controls="module-<%= parent.id %>" class="side-nav-link">
+            <span class="menu-icon"><i data-lucide="<%= parent.icono || 'folder' %>"></i></span>
+            <span class="menu-text"><%= parent.nombre %></span>
+            <span class="menu-arrow"></span>
+          </a>
+
+          <div class="collapse" id="module-<%= parent.id %>">
+            <ul class="sub-menu">
+              <% children.forEach((child) => { %>
+                <li class="side-nav-item">
+                  <a href="<%= child.url || '#!' %>" class="side-nav-link">
+                    <span class="menu-text"><%= child.nombre %></span>
+                  </a>
+                </li>
+              <% }); %>
+            </ul>
+          </div>
+        <% } else { %>
+          <a href="<%= parent.url || '#!' %>" class="side-nav-link">
+            <span class="menu-icon"><i data-lucide="<%= parent.icono || 'file' %>"></i></span>
+            <span class="menu-text"><%= parent.nombre %></span>
+          </a>
+        <% } %>
+      </li>
+    <% }); %>
+  <% } else { %>
+    <li class="side-nav-item">
+      <a href="#!" class="side-nav-link">
+        <span class="menu-text">No hay módulos disponibles</span>
+      </a>
+    </li>
+  <% } %>
+</ul>
+

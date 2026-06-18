@@ -1,0 +1,384 @@
+<style>
+  /* Kanban */
+  .kanban-board {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  .kanban-col {
+    background: #f6f7fb;
+    border-radius: 0.6rem;
+    padding: 0.75rem;
+    min-height: 60vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .kanban-col-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.25rem 0.5rem 0.75rem;
+    border-bottom: 1px solid #e5e7eb;
+    margin-bottom: 0.75rem;
+  }
+  .kanban-col-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .kanban-col-count {
+    background: #e5e7eb;
+    color: #1f2937;
+    border-radius: 999px;
+    padding: 0.1rem 0.55rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .kanban-col-body {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-height: 80px;
+  }
+  .kanban-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-left: 4px solid #94a3b8;
+    border-radius: 0.5rem;
+    padding: 0.6rem 0.7rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    cursor: grab;
+    transition: box-shadow 0.15s, transform 0.1s;
+  }
+  .kanban-card:hover {
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+  }
+  .kanban-card.sortable-ghost {
+    opacity: 0.4;
+  }
+  .kanban-card.is-bloqueada {
+    cursor: not-allowed;
+    background: #fef2f2;
+  }
+  .kanban-card-title {
+    font-weight: 600;
+    font-size: 0.92rem;
+    color: #111827;
+    margin-bottom: 0.15rem;
+  }
+  .kanban-card-date {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    color: #1f2937;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.35rem;
+    padding: 0.25rem 0.5rem;
+    margin: 0.3rem 0 0.45rem;
+    font-weight: 500;
+  }
+  .kanban-card-date .kanban-date-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: #475569;
+    letter-spacing: 0.04em;
+  }
+  .kanban-card-date .kanban-date-value {
+    color: #0f172a;
+    font-weight: 600;
+  }
+  .kanban-card-date.is-cerrada {
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+    color: #065f46;
+  }
+  .kanban-card-date.is-cerrada .kanban-date-label {
+    color: #047857;
+  }
+  .kanban-card-date.is-cerrada .kanban-date-value {
+    color: #064e3b;
+  }
+  .kanban-card-sub {
+    font-size: 0.78rem;
+    color: #6b7280;
+    margin-bottom: 0.4rem;
+  }
+  .kanban-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    font-size: 0.7rem;
+    color: #4b5563;
+  }
+  .kanban-card-prio {
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .prio-alta { background: #fee2e2; color: #b91c1c; }
+  .prio-media { background: #fef3c7; color: #92400e; }
+  .prio-baja { background: #dcfce7; color: #166534; }
+  .kanban-card-actions {
+    margin-top: 0.5rem;
+    display: flex;
+    gap: 0.3rem;
+  }
+  .kanban-card-actions .btn {
+    font-size: 0.72rem;
+    padding: 0.15rem 0.5rem;
+  }
+  /* Timeline de historial del prospecto en el modal de detalle. */
+  .kanban-historial-timeline {
+    position: relative;
+    padding-left: 1.5rem;
+  }
+  .kanban-historial-timeline::before {
+    content: "";
+    position: absolute;
+    left: 0.4rem;
+    top: 0.25rem;
+    bottom: 0.25rem;
+    width: 2px;
+    background: #e2e8f0;
+  }
+  .kanban-historial-item {
+    position: relative;
+    padding: 0.4rem 0 0.6rem 0.25rem;
+    font-size: 0.82rem;
+  }
+  .kanban-historial-item::before {
+    content: "";
+    position: absolute;
+    left: -1.1rem;
+    top: 0.65rem;
+    width: 0.65rem;
+    height: 0.65rem;
+    background: #cbd5e1;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px #cbd5e1;
+  }
+  .kanban-historial-item.is-reasignada::before {
+    background: #f59e0b; /* ámbar para destacar re-agendas */
+    box-shadow: 0 0 0 1px #f59e0b;
+  }
+  .kanban-historial-item.is-agregada::before {
+    background: #10b981; /* verde para "agregada" */
+    box-shadow: 0 0 0 1px #10b981;
+  }
+  .kanban-historial-item.is-cliente::before {
+    background: #6366f1; /* índigo para conversión a cliente */
+    box-shadow: 0 0 0 1px #6366f1;
+  }
+  .kanban-historial-meta {
+    color: #6b7280;
+    font-size: 0.72rem;
+    margin-top: 0.1rem;
+  }
+  .kanban-empty {
+    text-align: center;
+    color: #9ca3af;
+    font-size: 0.8rem;
+    padding: 1.5rem 0.5rem;
+    font-style: italic;
+  }
+  /* Toggle */
+  .view-toggle {
+    display: inline-flex;
+    background: #eef2f7;
+    padding: 0.2rem;
+    border-radius: 0.5rem;
+  }
+  .view-toggle button {
+    border: 0;
+    background: transparent;
+    padding: 0.35rem 0.9rem;
+    border-radius: 0.35rem;
+    font-size: 0.85rem;
+    color: #475569;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .view-toggle button.active {
+    background: #fff;
+    color: #111827;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+  /* Calendar */
+  #kanban-calendar {
+    min-height: 70vh;
+  }
+  .fc-event-prog {
+    background: #e5e7eb !important;
+    border: 1px dashed #94a3b8 !important;
+    color: #475569 !important;
+    opacity: 0.9;
+  }
+  .fc-event-real-completed {
+    background: #dcfce7 !important;
+    border-color: #16a34a !important;
+    color: #166534 !important;
+  }
+  .fc-event-real-progress {
+    background: #dbeafe !important;
+    border-color: #2563eb !important;
+    color: #1d4ed8 !important;
+  }
+  .fc-event-real-pending {
+    background: #f3f4f6 !important;
+    border-color: #9ca3af !important;
+    color: #4b5563 !important;
+  }
+  /* Filtros */
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: end;
+    margin-bottom: 1rem;
+  }
+  .filter-bar .form-select,
+  .filter-bar .form-control {
+    min-width: 160px;
+  }
+  .filter-bar label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #6b7280;
+    margin-bottom: 0.15rem;
+  }
+</style>
+
+<div class="row pt-3">
+  <div class="col-12">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+      <div>
+        <h3 class="fw-bold mb-0">Mis Tareas</h3>
+        <div class="text-muted small">
+          Hola, <strong id="js-kanban-user"><%= (typeof authUser !== 'undefined' && authUser && authUser.persona && authUser.persona.nombres) ? authUser.persona.nombres : 'Valorador' %></strong>
+          · arrastrá las tarjetas entre columnas para actualizar su estado.
+        </div>
+      </div>
+      <div class="view-toggle" role="group" aria-label="Cambiar vista">
+        <button type="button" id="js-view-board" class="active">
+          <i class="ti ti-layout-kanban"></i> Tablero
+        </button>
+        <button type="button" id="js-view-calendar">
+          <i class="ti ti-calendar"></i> Calendario
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Filtros -->
+<div class="row mt-3">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body py-2">
+        <div class="filter-bar">
+            <div>
+              <label>Tipo de tarea</label>
+              <select id="js-f-tipo" class="form-select form-select-sm">
+                <option value="">Todos</option>
+                <option value="REUNION">Reunión</option>
+                <option value="OTROS" selected>Otras</option>
+              </select>
+            </div>
+          <div>
+            <label>Prioridad</label>
+            <select id="js-f-prio" class="form-select form-select-sm">
+              <option value="">Todas</option>
+              <option value="Alta">Alta</option>
+              <option value="Media">Media</option>
+              <option value="Baja">Baja</option>
+            </select>
+          </div>
+          <div>
+            <label>Estado</label>
+            <select id="js-f-estado" class="form-select form-select-sm">
+              <option value="">Todos</option>
+              <option value="pendiente">Pendiente</option>
+              <option value="en_progreso">En progreso</option>
+              <option value="completada">Completada</option>
+            </select>
+          </div>
+          <div id="js-f-date-wrap" style="display:none">
+            <label>Desde</label>
+            <input type="date" id="js-f-from" class="form-control form-control-sm" />
+          </div>
+          <div id="js-f-date-wrap2" style="display:none">
+            <label>Hasta</label>
+            <input type="date" id="js-f-to" class="form-control form-control-sm" />
+          </div>
+          <div>
+            <button id="js-f-clear" type="button" class="btn btn-sm btn-light">
+              <i class="ti ti-x"></i> Limpiar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tablero Kanban -->
+<div id="js-kanban-view" class="row mt-2">
+  <div class="col-12">
+    <div class="kanban-board" id="js-kanban-board">
+      <!-- Las columnas se inyectan vía JS -->
+    </div>
+  </div>
+</div>
+
+<!-- Vista Calendario (oculta por defecto) -->
+<div id="js-calendar-view" class="row mt-2" style="display:none">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body">
+        <div id="kanban-calendar"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal detalle de actividad -->
+<div class="modal fade" id="js-act-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="js-act-modal-title">Actividad</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="js-act-modal-body"></div>
+      <!-- Sección de historial del prospecto: se llena vía fetch en
+           kanban.js al abrir el modal. Se muestra solo si la
+           actividad tiene prospecto_id. -->
+      <div class="modal-body border-top" id="js-act-historial-wrap" style="display:none">
+        <h6 class="mb-3">
+          <i class="ti ti-history"></i> Historial del prospecto
+          <span class="text-muted small ms-1" id="js-act-historial-count"></span>
+        </h6>
+        <div id="js-act-historial-body" class="kanban-historial-timeline">
+          <div class="text-muted small">Cargando historial…</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
+        <a href="#" id="js-act-modal-link" class="btn btn-primary" target="_blank" style="display:none">
+          <i class="ti ti-external-link"></i> Ir al prospecto
+        </a>
+      </div>
+    </div>
+  </div>
+</div>

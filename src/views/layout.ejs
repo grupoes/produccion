@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>
+      <%= typeof title !== 'undefined' ? title : 'Home | Grupo ES' %>
+    </title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Grupo Es" />
+    <meta name="keywords" content="Grupo Es" />
+    <meta name="author" content="Grupo Es" />
+
+    <!-- Auto-recarga al expirar la sesión (24 horas = 86400 segundos) -->
+    <meta http-equiv="refresh" content="86400;url=/" />
+
+    <!-- App favicon -->
+    <link rel="shortcut icon" href="/assets/images/favicon.ico" />
+
+    <%- typeof style != 'undefined' ? style : '' %>
+
+    <!-- Theme Config Js -->
+    <script src="/assets/js/config.js"></script>
+
+    <!-- Vendor css -->
+    <link href="/assets/css/vendors.min.css" rel="stylesheet" type="text/css" />
+
+    <!-- App css -->
+    <link href="/assets/css/app.min.css" rel="stylesheet" type="text/css" />
+
+    <script src="/assets/plugins/lucide/lucide.min.js"></script>
+  </head>
+
+  <body>
+    <!-- Begin page -->
+    <div class="wrapper">
+      <%- include('./partials/header') %>
+
+      <!-- Sidenav Menu Start -->
+      <div class="sidenav-menu">
+        <div class="scrollbar" data-simplebar>
+          <!-- User -->
+          <div class="sidenav-user text-nowrap border border-dashed rounded-3">
+            <a href="#!" class="sidenav-user-name d-flex align-items-center">
+              <img
+                src="/assets/images/users/user-2.jpg"
+                width="36"
+                class="rounded-circle me-2 d-flex"
+                alt="user-image"
+              />
+              <span>
+                <h5 class="my-0 fw-semibold">
+                  <%= typeof authUser !== 'undefined' && authUser &&
+                  authUser.persona && authUser.persona.nombres ?
+                  authUser.persona.nombres.split(' ').map(word => word ?
+                  word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() :
+                  '').join(' ') : 'Maxine Kennedy' %>
+                </h5>
+                <h6 class="my-0 text-muted">
+                  <%= typeof authUser !== 'undefined' && authUser &&
+                  authUser.rol && authUser.rol.nombre ?
+                  authUser.rol.nombre.split(' ').map(word => word ?
+                  word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() :
+                  '').join(' ') : 'Admin Head' %>
+                </h6>
+              </span>
+            </a>
+          </div>
+
+          <!--- Sidenav Menu -->
+          <%- include('./partials/menu') %>
+        </div>
+
+        <div class="menu-collapse-box d-none d-xl-block">
+          <button class="button-collapse-toggle">
+            <i
+              data-lucide="square-chevron-left"
+              class="align-middle flex-shrink-0"
+            ></i>
+            <span>Collapse Menu</span>
+          </button>
+        </div>
+      </div>
+      <!-- Sidenav Menu End -->
+
+      <script>
+        // Note: If you do not want any of this logic here, you can remove it. It's already in app.js. This is for removing delays.
+
+        // Sidenav Icons
+        lucide.createIcons();
+
+        // Sidenav Link Activation
+        const currentUrlT = window.location.href.split(/[?#]/)[0];
+        const currentPageT = window.location.pathname
+          .split("https://coderthemes.com/")
+          .pop();
+        const sideNavT = document.querySelector(".side-nav");
+
+        document.querySelectorAll(".side-nav-link[href]").forEach((link) => {
+          const linkHref = link.getAttribute("href");
+          if (!linkHref) return;
+
+          const match = linkHref === currentPageT || link.href === currentUrlT;
+
+          if (match) {
+            // Mark link and its li active
+            link.classList.add("active");
+            const li = link.closest("li.side-nav-item");
+            if (li) li.classList.add("active");
+
+            // Expand all parent .collapse and set toggles
+            let parentCollapse = link.closest(".collapse");
+            while (parentCollapse) {
+              parentCollapse.classList.add("show");
+
+              const parentToggle = document.querySelector(
+                `a[href="#${parentCollapse.id}"]`,
+              );
+              if (parentToggle) {
+                parentToggle.setAttribute("aria-expanded", "true");
+                const parentLi = parentToggle.closest("li.side-nav-item");
+                if (parentLi) parentLi.classList.add("active");
+              }
+
+              parentCollapse =
+                parentCollapse.parentElement.closest(".collapse");
+            }
+          }
+        });
+      </script>
+
+      <!-- ============================================================== -->
+      <!-- Start Main Content -->
+      <!-- ============================================================== -->
+
+      <div class="content-page">
+        <div class="container-fluid"><%- body %></div>
+        <!-- container -->
+
+        <%- include('./partials/footer') %>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- End of Main Content -->
+      <!-- ============================================================== -->
+    </div>
+    <!-- END wrapper -->
+
+    <!-- Standard modal content -->
+    <div
+      id="standard-modal"
+      class="modal fade"
+      tabindex="-1"
+      role="dialog"
+      aria-labelledby="standard-modalLabel"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h4 class="modal-title" id="standard-modalLabel"></h4>
+            <button
+              type="button"
+              class="btn-close"
+              data-bs-dismiss="modal"
+              aria-label="Close"
+            ></button>
+          </div>
+          <div class="modal-body"></div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+              Cerrar
+            </button>
+            <button
+              type="button"
+              id="js-btn-convertir-pp"
+              class="btn btn-success"
+              style="display:none"
+              title="Convierte el prospecto a cliente. Requiere: título, universidad, carrera, nivel académico, prioridad, fecha de entrega y al menos un contacto con celular."
+            >
+              <i class="ti ti-arrow-up-circle me-1 align-middle"></i>
+              Convertir a cliente
+            </button>
+            <button type="button" class="btn btn-primary">Guardar</button>
+          </div>
+        </div>
+        <!-- /.modal-content -->
+      </div>
+      <!-- /.modal-dialog -->
+    </div>
+    <!-- /.modal -->
+
+    <!-- Vendor js -->
+    <script src="/assets/js/vendors.min.js"></script>
+
+    <!-- DataTables en Español (Global) -->
+    <script src="/assets/js/datatables-es.js"></script>
+
+    <!-- App js -->
+    <script src="/assets/js/app.js"></script>
+    <script src="/assets/js/pages/logout.js"></script>
+
+    <!-- Usuario autenticado disponible para el cliente (notificaciones, etc.) -->
+    <script>
+      window.AUTH_USER = <%- JSON.stringify(typeof authUser !== 'undefined' ? authUser : null) %>;
+    </script>
+
+    <!-- Socket.IO (servido por el server de Node) -->
+    <script src="/socket.io/socket.io.js"></script>
+
+    <!-- Cliente de notificaciones en tiempo real -->
+    <script src="/js/notificaciones/index.js"></script>
+
+    <%- typeof script != 'undefined' ? script : '' %>
+  </body>
+</html>

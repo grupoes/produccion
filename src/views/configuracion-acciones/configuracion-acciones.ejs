@@ -1,0 +1,105 @@
+<div class="row justify-content-center py-3">
+  <div class="col-xxl-6 col-xl-8 text-center">
+    <h3 class="fw-bold">Configuración de Acciones</h3>
+    <p class="text-muted mb-0">
+      Administra el catálogo de acciones y asígnalas a cada submódulo del sistema.
+    </p>
+  </div>
+</div>
+
+<ul class="nav nav-tabs nav-bordered mb-3" role="tablist">
+  <li class="nav-item">
+    <a href="#tab-acciones" data-bs-toggle="tab" class="nav-link active" aria-selected="true">
+      <i class="ti ti-list-check me-1"></i> Acciones
+    </a>
+  </li>
+  <li class="nav-item">
+    <a href="#tab-matriz" data-bs-toggle="tab" class="nav-link" aria-selected="false">
+      <i class="ti ti-layout-grid me-1"></i> Asignación a submódulos
+    </a>
+  </li>
+</ul>
+
+<div class="tab-content">
+  <!-- ====== TAB 1: Acciones (CRUD) ====== -->
+  <div class="tab-pane fade show active" id="tab-acciones">
+    <div class="row">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header justify-content-between">
+            <div>
+              <h5 class="card-title mb-0">Catálogo de acciones</h5>
+              <small class="text-muted">
+                Crea aquí las acciones (Crear, Editar, Eliminar, Exportar, Aprobar…) que luego podrás asignar a los submódulos.
+              </small>
+            </div>
+            <button
+              type="button"
+              id="btn-nueva-accion"
+              class="btn btn-sm btn-primary"
+            >
+              <i class="ti ti-plus align-middle fs-lg me-1"></i> Nueva
+            </button>
+          </div>
+
+          <div class="card-body">
+            <table
+              id="table-acciones"
+              data-tables="basic"
+              class="table table-striped dt-responsive align-middle mb-0"
+            >
+              <thead class="thead-sm text-uppercase fs-xxs">
+                <tr>
+                  <th>#</th>
+                  <th>Nombre</th>
+                  <th>Descripción</th>
+                  <th class="text-center">Estado</th>
+                  <th class="text-center">Acciones</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== TAB 2: Matriz ====== -->
+  <div class="tab-pane fade" id="tab-matriz">
+    <div class="row">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header d-flex align-items-center justify-content-between">
+            <div>
+              <h5 class="card-title mb-0">Asignación submódulos × acciones</h5>
+              <small class="text-muted">
+                Marca las acciones disponibles para cada submódulo. Los cambios se guardan al pulsar "Guardar cambios".
+              </small>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <span id="matriz-dirty" class="badge bg-warning text-dark" style="display: none;">
+                Cambios sin guardar
+              </span>
+              <button
+                type="button"
+                id="btn-save-matriz"
+                class="btn btn-sm btn-primary"
+                disabled
+              >
+                <i class="ti ti-device-floppy align-middle me-1"></i> Guardar cambios
+              </button>
+            </div>
+          </div>
+
+          <div class="card-body" id="matriz-body">
+            <div class="text-center text-muted py-5">
+              <span class="spinner-border spinner-border-sm me-2"></span>
+              Cargando matriz…
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

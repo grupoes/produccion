@@ -1,0 +1,57 @@
+<div class="row justify-content-center py-3">
+  <div class="col-xxl-5 col-xl-7 text-center">
+    <h3 class="fw-bold">Feriados</h3>
+    <p class="text-muted mb-0">
+      Gestiona los feriados del año. Puedes cargarlos uno a uno o usar
+      "Generar feriados del año" para insertar los fijos y los móviles
+      (Jueves / Viernes Santo) automáticamente.
+    </p>
+  </div>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header justify-content-between">
+        <h5 class="card-title">Feriados</h5>
+        <div class="d-flex gap-2">
+          <button
+            type="button"
+            id="btn-generar-feriados"
+            class="btn btn-sm btn-outline-primary"
+          >
+            <i class="ti ti-calendar-stats align-middle me-1"></i> Generar
+            feriados del año
+          </button>
+          <button
+            type="button"
+            id="btn-nuevo-feriado"
+            class="btn btn-sm btn-primary"
+          >
+            <i class="ti ti-plus align-middle fs-lg me-1"></i> Nuevo
+          </button>
+        </div>
+      </div>
+
+      <div class="card-body">
+        <table
+          id="table-feriados"
+          data-tables="basic"
+          class="table table-striped dt-responsive align-middle mb-0"
+        >
+          <thead class="thead-sm text-uppercase fs-xxs">
+            <tr>
+              <th>#</th>
+              <th>Fecha</th>
+              <th>Nombre</th>
+              <th class="text-center">Acciones</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <!-- end card-body-->
+    </div>
+    <!-- end card-->
+  </div>
+</div>
