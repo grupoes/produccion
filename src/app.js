@@ -47,6 +47,7 @@ import apiKanbanRoutes from "./routes/api.kanban.routes.js";
 import apiCalendarioAsistenteRoutes from "./routes/api.calendario-asistente.routes.js";
 import apiReunionesAsistenteRoutes from "./routes/api.reuniones-asistente.routes.js";
 import apiImportacionRoutes from "./routes/api.importacion.routes.js";
+import apiClientesRoutes from "./routes/api.clientes.routes.js";
 
 import { requireAuth } from "./middlewares/auth.middleware.js";
 import modulesService from "./services/modules.service.js";
@@ -126,6 +127,7 @@ app.use("/api/kanban", requireAuth, apiKanbanRoutes);
 app.use("/api/calendario-asistente", requireAuth, apiCalendarioAsistenteRoutes);
 app.use("/api/calendario-asistente", requireAuth, apiReunionesAsistenteRoutes);
 app.use("/api/importacion", requireAuth, apiImportacionRoutes);
+app.use("/api/clientes", requireAuth, apiClientesRoutes);
 app.use("/api", indexRoutes);
 
 // Rutas Admin (Retornan Vistas HTML) protegidas

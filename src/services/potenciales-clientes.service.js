@@ -158,7 +158,8 @@ class PotencialesClientesService {
   // Devuelve true si la tarea indicada es de tipo "REUNION/REUNIONES"
   // según `tipo_tarea.tipo` o `tipo_tarea.id`. Match case + accent
   // insensitive, por nombre (contains) o por id hard-coded.
-  async #isReunionTarea(tx, tareaId) {
+  // Público: lo reusan otros services (clientes.service.js).
+  async isReunionTarea(tx, tareaId) {
     if (!tareaId) return false;
     const t = await tx.tarea.findUnique({
       where: { id: Number(tareaId) },
@@ -842,7 +843,7 @@ class PotencialesClientesService {
       //    y matchea nombre+apellido, la reutilizamos).
       const personaIds = [];
       for (const c of contactos) {
-        const persona = await this.#upsertPersona(tx, c);
+        const persona = await this.upsertPersona(tx, c);
         personaIds.push(persona.id);
       }
 
@@ -909,7 +910,7 @@ class PotencialesClientesService {
       //    La fecha y la hora son elegidas por el usuario en el modal
       //    (con sugerencia de hoy). Si no hay asistente activo, el
       //    create falla con BAD_REQUEST.
-      const isReunion = await this.#isReunionTarea(tx, tarea_id);
+      const isReunion = await this.isReunionTarea(tx, tarea_id);
       let fechaAsig = fecha_asignacion ? new Date(fecha_asignacion) : null;
       let usuarioAsig = usuario_asignado_id
         ? Number(usuario_asignado_id)
@@ -1127,7 +1128,7 @@ class PotencialesClientesService {
       //     se les pinta recién cuando la marcan como completada
       //     (ver #insertHorarioUsuarioValoradorAlCompletar).
       if (usuarioAsig && fechaAsig && !isReunion) {
-        await this.#createHorarioUsuarioSiNoEsValorador(tx, {
+        await this.createHorarioUsuarioSiNoEsValorador(tx, {
           usuarioId: usuarioAsig,
           actividadId: actividad.id,
           fecha: fechaAsig,
@@ -1290,7 +1291,7 @@ class PotencialesClientesService {
       // 3) Regla REUNIÓN: si la tarea es de tipo reunión, se fuerza la
       //    asignación al ASISTENTE DE PRODUCCIÓN activo, sin pintar
       //    bloque en su calendario (no se inserta horario_usuario).
-      const isReunion = await this.#isReunionTarea(tx, tarea_id);
+      const isReunion = await this.isReunionTarea(tx, tarea_id);
       let fechaAsig = fecha_asignacion ? new Date(fecha_asignacion) : null;
       let usuarioAsig = usuario_asignado_id
         ? Number(usuario_asignado_id)
@@ -1462,7 +1463,7 @@ class PotencialesClientesService {
       //    Excepción VALORADOR: el slot se inserta recién cuando
       //    completa la actividad (ver #createHorarioUsuarioSiNoEsValorador).
       if (usuarioAsig && fechaAsig && !isReunion) {
-        await this.#createHorarioUsuarioSiNoEsValorador(tx, {
+        await this.createHorarioUsuarioSiNoEsValorador(tx, {
           usuarioId: usuarioAsig,
           actividadId: actividad.id,
           fecha: fechaAsig,
@@ -1635,7 +1636,7 @@ class PotencialesClientesService {
 
         const personaIds = [];
         for (const c of contactos) {
-          const persona = await this.#upsertPersona(tx, c);
+          const persona = await this.upsertPersona(tx, c);
           personaIds.push(persona.id);
         }
         if (personaIds.length) {
@@ -1852,8 +1853,8 @@ class PotencialesClientesService {
   // Devuelve true si el usuario tiene rol VALORADOR (id = ROL_VALORADOR_ID
   // o nombre matchea ROL_VALORADOR). Usado para decidir si se inserta
   // o no en `horario_usuario` (los VALORADORES no se agendan al crear;
-  // se les pinta el slot recién cuando cierran la actividad).
-  async #isUserValorador(tx, usuarioId) {
+  // Público: lo reusan otros services (clientes.service.js).
+  async isUserValorador(tx, usuarioId) {
     if (!usuarioId) return false;
     const u = await tx.usuarios.findUnique({
       where: { id: Number(usuarioId) },
@@ -1883,25 +1884,223 @@ class PotencialesClientesService {
   //
   // params: { usuarioId, actividadId, fecha, horaInicio, horaFin,
   //           duracionMinutos, tipo, categoria }
-  async #createHorarioUsuarioSiNoEsValorador(tx, p) {
+  // Público: lo reusan otros services (clientes.service.js).
+  async createHorarioUsuarioSiNoEsValorador(tx, p) {
     if (!p?.usuarioId) return null;
-    const isValorador = await this.#isUserValorador(tx, p.usuarioId);
+    const isValorador = await this.isUserValorador(tx, p.usuarioId);
     if (isValorador) return null; // VALORADOR: el slot se inserta al cerrar
-    return await tx.horario_usuario.create({
-      data: {
-        actividad_id: p.actividadId,
-        usuario_id: Number(p.usuarioId),
-        fecha: p.fecha,
-        hora_inicio: p.horaInicio,
-        hora_fin: p.horaFin,
-        estado: true,
-        tipo: p.tipo || "actividad",
-        categoria: p.categoria || "potencial_cliente",
-        duracion_minutos: p.duracionMinutos ?? null,
-        created_at: new Date(),
-        updated_at: new Date(),
-      },
-    });
+
+    const usuarioId = Number(p.usuarioId);
+    const actividadId = p.actividadId;
+    const fecha = p.fecha;
+    const horaInicio = p.horaInicio;
+    const duracionTotal = Math.max(0, Math.floor(Number(p.duracionMinutos) || 0));
+    const tipo = p.tipo || "actividad";
+    const categoria = p.categoria || "potencial_cliente";
+
+    // Caso "no-op": sin duración → no creamos nada (la actividad sin
+    // duración estimada no se pinta en el calendario).
+    if (duracionTotal === 0) return null;
+
+    // Distribuye la actividad en sub-bloques que respetan la jornada del
+    // usuario (`horario_jornada_detalle`). Si la actividad dura más que
+    // un solo bloque de la jornada, se crean N filas en `horario_usuario`,
+    // una por cada sub-bloque, todas con el mismo `actividad_id`.
+    // Si el usuario no tiene jornada, cae al fallback de 1 sola fila
+    // (hora_inicio → hora_inicio + duracion) para no perder la actividad.
+    const segments = await this.#distributeAcrossJornada(
+      tx,
+      usuarioId,
+      fecha,
+      horaInicio,
+      duracionTotal,
+    );
+
+    const baseData = {
+      actividad_id: actividadId,
+      usuario_id: usuarioId,
+      estado: true,
+      tipo,
+      categoria,
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    if (segments.length === 0) {
+      // Sin jornada configurada (o todos los días siguientes están sin
+      // jornada hasta agotar la búsqueda): creamos una sola fila con el
+      // rango completo. Esto mantiene la actividad visible aunque esté
+      // fuera del horario laboral.
+      const horaFin = p.horaFin || new Date(horaInicio.getTime() + duracionTotal * 60_000);
+      return await tx.horario_usuario.create({
+        data: {
+          ...baseData,
+          fecha,
+          hora_inicio: horaInicio,
+          hora_fin: horaFin,
+          duracion_minutos: duracionTotal,
+        },
+      });
+    }
+
+    const created = [];
+    for (const seg of segments) {
+      const row = await tx.horario_usuario.create({
+        data: {
+          ...baseData,
+          fecha: seg.fecha,
+          hora_inicio: seg.horaInicio,
+          hora_fin: seg.horaFin,
+          duracion_minutos: seg.duracionMinutos,
+        },
+      });
+      created.push(row);
+    }
+    return created;
+  }
+
+  // Distribuye una actividad de `duracionMinutos` en segmentos que
+  // respetan los bloques de jornada del usuario (`horario_jornada_detalle`).
+  // Empieza en `fecha` a la hora `horaInicio` (Date, sólo importa la parte
+  // HH:MM:SS como wall-clock). Si la actividad no entra en los bloques
+  // del día, continúa al día siguiente. Devuelve un array de segmentos
+  // `{ fecha, horaInicio, horaFin, duracionMinutos }` listos para
+  // insertar en `horario_usuario`. Si el usuario no tiene jornada para
+  // ningún día dentro del rango de búsqueda, devuelve `[]`.
+  async #distributeAcrossJornada(tx, usuarioId, fecha, horaInicio, duracionMinutos) {
+    const segments = [];
+    let restante = duracionMinutos;
+
+    let currentDate = new Date(
+      fecha.getFullYear(),
+      fecha.getMonth(),
+      fecha.getDate(),
+    );
+    let isFirstDay = true;
+    let firstDayTimeMin =
+      horaInicio.getUTCHours() * 60 + horaInicio.getUTCMinutes();
+    const MAX_DAYS = 60; // tope de seguridad: no iterar más de 2 meses
+    let dayCount = 0;
+
+    while (restante > 0 && dayCount < MAX_DAYS) {
+      dayCount += 1;
+      const diaId = DAY_ID_BY_GETDAY[currentDate.getDay()] || null;
+
+      if (!diaId) {
+        // Domingo u otro día no modelado: saltar sin consumir tiempo.
+        currentDate.setDate(currentDate.getDate() + 1);
+        isFirstDay = false;
+        continue;
+      }
+
+      const bloques = await tx.$queryRawUnsafe(
+        `SELECT to_char(hora_inicio::time, 'HH24:MI:SS') AS hi,
+                to_char(hora_fin::time,    'HH24:MI:SS') AS hf
+           FROM horario_jornada_detalle
+          WHERE usuario_id = $1
+            AND dia_semana = $2
+            AND estado = true
+            AND hora_inicio IS NOT NULL
+            AND hora_fin IS NOT NULL
+          ORDER BY hora_inicio ASC`,
+        usuarioId,
+        diaId,
+      );
+
+      if (!bloques || bloques.length === 0) {
+        // El usuario no trabaja este día: saltar.
+        currentDate.setDate(currentDate.getDate() + 1);
+        isFirstDay = false;
+        continue;
+      }
+
+      // Inicio del día: si es el primero, respetamos la hora que eligió
+      // el usuario; si no, arrancamos a las 00:00 para encontrar el
+      // primer bloque disponible.
+      let cursorMin = isFirstDay ? firstDayTimeMin : 0;
+
+      for (const b of bloques) {
+        if (restante <= 0) break;
+        const blockStart = toMinFromHms(b.hi);
+        const blockEnd = toMinFromHms(b.hf);
+        if (blockStart == null || blockEnd == null) continue;
+        if (blockEnd <= blockStart) continue;
+        if (cursorMin >= blockEnd) continue; // ya pasamos este bloque
+
+        // El segmento va desde el mayor(cursor, inicio del bloque) hasta
+        // el menor(segIni + restante, fin del bloque). Si el cursor cayó
+        // dentro de un break, hacemos snap al inicio del bloque: en ese
+        // caso `segIni > cursorMin` y hay que calcular el fin desde
+        // `segIni` (no desde `cursorMin`), si no el segmento terminaría
+        // antes de empezar y el bloque se descartaría.
+        const segIni = Math.max(cursorMin, blockStart);
+        const segFin = Math.min(segIni + restante, blockEnd);
+        const segDur = segFin - segIni;
+        if (segDur <= 0) continue;
+
+        const segFecha = new Date(currentDate);
+        const segHoraIni = new Date(
+          Date.UTC(1970, 0, 1, Math.floor(segIni / 60), segIni % 60, 0),
+        );
+        const segHoraFin = new Date(
+          Date.UTC(1970, 0, 1, Math.floor(segFin / 60), segFin % 60, 0),
+        );
+
+        segments.push({
+          fecha: segFecha,
+          horaInicio: segHoraIni,
+          horaFin: segHoraFin,
+          duracionMinutos: segDur,
+        });
+
+        restante -= segDur;
+        cursorMin = segFin; // continuar dentro del mismo día desde aquí
+      }
+
+      currentDate.setDate(currentDate.getDate() + 1);
+      isFirstDay = false;
+    }
+
+    // Si tras recorrer `MAX_DAYS` aún queda tiempo por distribuir, lo
+    // agregamos como un segmento final que arranca justo donde terminó
+    // el último bloque de jornada. Esto representa la parte de la
+    // actividad que cae fuera del horario laboral (visible en el
+    // calendario) en vez de "comerse" silenciosamente la duración.
+    if (restante > 0 && segments.length > 0) {
+      const last = segments[segments.length - 1];
+      const lastEndMin =
+        last.horaFin.getUTCHours() * 60 + last.horaFin.getUTCMinutes();
+      // Sumamos el restante (en minutos) a la hora de fin. Si el
+      // resultado cruza medianoche, ajustamos wall-clock y fecha.
+      const totalEndMin = lastEndMin + restante;
+      const dayOffset = Math.floor(totalEndMin / (24 * 60));
+      const wallEndMin = ((totalEndMin % (24 * 60)) + 24 * 60) % (24 * 60);
+      const finalFecha = new Date(
+        last.fecha.getTime() + dayOffset * 24 * 60 * 60_000,
+      );
+      const finalHoraIni = new Date(
+        Date.UTC(1970, 0, 1, Math.floor(lastEndMin / 60), lastEndMin % 60, 0),
+      );
+      const finalHoraFin = new Date(
+        Date.UTC(
+          1970,
+          0,
+          1,
+          Math.floor(wallEndMin / 60),
+          wallEndMin % 60,
+          0,
+        ),
+      );
+
+      segments.push({
+        fecha: finalFecha,
+        horaInicio: finalHoraIni,
+        horaFin: finalHoraFin,
+        duracionMinutos: restante,
+      });
+    }
+
+    return segments;
   }
 
   // Inserta (o actualiza) un registro en `horario_usuario` SOLO si el
@@ -1915,7 +2114,7 @@ class PotencialesClientesService {
   //           tipo, categoria }
   async #insertHorarioUsuarioValoradorAlCompletar(tx, p) {
     if (!p?.usuarioId) return null;
-    const isValorador = await this.#isUserValorador(tx, p.usuarioId);
+    const isValorador = await this.isUserValorador(tx, p.usuarioId);
     if (!isValorador) return null; // No VALORADOR: ya se insertó al crear
     // Si la actividad nunca fue iniciada, hora_inicio_real es null;
     // caemos al cierre para no romper el rango (duración 0).
@@ -2151,7 +2350,8 @@ class PotencialesClientesService {
     return null;
   }
 
-  async #upsertPersona(tx, c) {
+  // Público: lo reusan otros services (clientes.service.js).
+  async upsertPersona(tx, c) {
     const nombres = c.nombres ? String(c.nombres).trim() : null;
     const apellidos = c.apellidos ? String(c.apellidos).trim() : null;
     const celular = String(c.celular).trim();
@@ -2426,7 +2626,7 @@ class PotencialesClientesService {
       minutos = tarea.horas_estimadas ? Number(tarea.horas_estimadas) : 60;
 
       fechaAsig = new Date(payload.fecha_asignacion);
-      horaIni = this.#hmsToDate(payload.hora_inicio);
+      horaIni = this.hmsToDate(payload.hora_inicio);
       if (!horaIni) {
         const e = new Error("hora_inicio inválida (use HH:MM).");
         e.code = "BAD_REQUEST";
@@ -2447,14 +2647,14 @@ class PotencialesClientesService {
 
       // Validaciones de calendario iguales a create():
       //   (1) feriado, (2) cumpleaños, (3) bloque lo suficientemente largo.
-      await this.#validarDiaAsignacion(usuarioAsig, fechaAsig, minutos);
+      await this.validarDiaAsignacion(usuarioAsig, fechaAsig, minutos);
 
       // 1) Chequear conflicto en la hora EXACTA que pidió el usuario.
       //    Si entra, devolvemos fits:true. Si no, 409 con el plan.
       const fmt = (d) =>
         `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       const fechaStr = fmt(fechaAsig);
-      const conflictos = await this.#checkSlotConflict(
+      const conflictos = await this.checkSlotConflict(
         usuarioAsig,
         fechaStr,
         horaIni,
@@ -2600,7 +2800,7 @@ class PotencialesClientesService {
         });
         const personaIds = [];
         for (const c of contactos) {
-          const persona = await this.#upsertPersona(tx, c);
+          const persona = await this.upsertPersona(tx, c);
           personaIds.push(persona.id);
         }
         if (personaIds.length) {
@@ -2805,7 +3005,7 @@ class PotencialesClientesService {
         if (!upd) {
           // Verificamos VALORADOR antes de crear (el NOT EXISTS protege
           // el UPDATE pero el create() de Prisma no aplica ese filtro).
-          const isValorador = await this.#isUserValorador(tx, usuarioAsig);
+          const isValorador = await this.isUserValorador(tx, usuarioAsig);
           if (!isValorador) {
             await tx.horario_usuario.create({
               data: {
@@ -2919,8 +3119,8 @@ class PotencialesClientesService {
         actividad_id: actividadId,
         slot: quiereAgendar
           ? {
-              hi: this.#dateToHHMM(horaIni),
-              hf: this.#dateToHHMM(horaFin),
+              hi: this.dateToHHMM(horaIni),
+              hf: this.dateToHHMM(horaFin),
             }
           : null,
         notifications: insertedNotifs,
@@ -3007,7 +3207,8 @@ class PotencialesClientesService {
   // (los readers usan getUTCHours, así que el writer tiene que guardar
   // con Date.UTC para que el round-trip sea coherente en cualquier
   // huso del servidor).
-  #hmsToDate(s) {
+  // Convierte "HH:MM[:SS]" a Date UTC. Público para reutilización.
+  hmsToDate(s) {
     if (!s) return null;
     const m = String(s).match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
     if (!m) return null;
@@ -3016,13 +3217,20 @@ class PotencialesClientesService {
     );
   }
 
-  #dateToHHMM(d) {
+  // Date → "HH:MM". Público para reutilización.
+  dateToHHMM(d) {
     return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
   }
 
   // Valida que el día sea agendable: no feriado, no cumpleaños del
   // usuario, y que haya un bloque de jornada que entre la actividad.
-  async #validarDiaAsignacion(usuarioId, fechaLocal, minutos) {
+  // Público: lo reusan otros services (clientes.service.js).
+  async validarDiaAsignacion(usuarioId, fechaLocal, minutos, opts = {}) {
+    // opts.skipBloqueChecks (default false): no abortar si el usuario no
+    //   tiene bloques de jornada o si los bloques son más cortos que la
+    //   actividad. Útil para flujos de "agregar cliente" donde se permite
+    //   programar manualmente fuera del horario laboral.
+    const { skipBloqueChecks = false } = opts;
     // (1) Feriado
     const feriado = await prisma.feriados.findFirst({
       where: { fecha: fechaLocal, estado: true },
@@ -3085,6 +3293,7 @@ class PotencialesClientesService {
         }
       }
       if (bloques.length > 0 && !entraEnBloque) {
+        if (skipBloqueChecks) return;
         const e = new Error(
           "El usuario no tiene un bloque de horario lo suficientemente largo para la tarea seleccionada.",
         );
@@ -3092,6 +3301,7 @@ class PotencialesClientesService {
         throw e;
       }
       if (bloques.length === 0) {
+        if (skipBloqueChecks) return;
         const e = new Error(
           "El usuario no tiene horario registrado para el día seleccionado.",
         );
@@ -3104,7 +3314,8 @@ class PotencialesClientesService {
   // Devuelve los eventos que se solapan con el slot dado. Si la lista
   // está vacía, el slot está libre. Cada item incluye actividad_id y
   // un campo `bloqueada` para que el front sepa si es movible o no.
-  async #checkSlotConflict(usuarioId, fechaStr, horaIni, horaFin) {
+  // Público: lo reusan otros services (clientes.service.js).
+  async checkSlotConflict(usuarioId, fechaStr, horaIni, horaFin) {
     const rows = await prisma.$queryRawUnsafe(
       `SELECT hu.actividad_id,
               TO_CHAR(hu.hora_inicio::time, 'HH24:MI:SS') AS hi,

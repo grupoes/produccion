@@ -28,6 +28,27 @@ class HorarioController {
         .json({ error: "Error al obtener el horario.", detail: error.message });
     }
   }
+
+  async usuarioTieneJornada(req, res) {
+    try {
+      const { usuario_id, fecha } = req.query;
+      if (!usuario_id || !fecha) {
+        return res
+          .status(400)
+          .json({ error: "usuario_id y fecha son requeridos." });
+      }
+      const data = await horarioService.usuarioTieneJornada(
+        Number(usuario_id),
+        String(fecha),
+      );
+      return res.json({ success: true, data });
+    } catch (error) {
+      console.error("HorarioController.usuarioTieneJornada error:", error);
+      return res
+        .status(500)
+        .json({ error: "Error al consultar la jornada.", detail: error.message });
+    }
+  }
 }
 
 export default new HorarioController();

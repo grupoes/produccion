@@ -328,6 +328,32 @@ class ReunionesAsistenteService {
       .map((pp) => pp.personas)
       .filter(Boolean);
 
+    // Auditoría: usuario que REGISTRÓ la actividad. El schema NO
+    // declara la relación navegable `actividades.usuario_register →
+    // usuarios`, así que leemos el id y resolvemos el nombre en una
+    // segunda query. Nullable para actividades legacy.
+    let registrado_por = null;
+    if (a.usuario_register != null) {
+      const u = await prisma.usuarios.findUnique({
+        where: { id: a.usuario_register },
+        select: {
+          id: true,
+          usuario: true,
+          personas: { select: { nombres: true, apellidos: true } },
+        },
+      });
+      if (u) {
+        const nom = u.personas?.nombres || "";
+        const ape = u.personas?.apellidos || "";
+        registrado_por = {
+          id: u.id,
+          usuario: u.usuario,
+          nombre_completo:
+            `${nom} ${ape}`.trim() || u.usuario || `#${u.id}`,
+        };
+      }
+    }
+
     return {
       id: a.id,
       estado_progreso: a.estado_progreso,
@@ -415,6 +441,7 @@ class ReunionesAsistenteService {
             duracion_minutos: slot.duracion_minutos || null,
           }
         : null,
+      registrado_por,
     };
   }
 
@@ -546,11 +573,36 @@ class ReunionesAsistenteService {
   // -----------------------------------------------------------------------
   // Validación de slot libre (evita doble agendamiento)
   // -----------------------------------------------------------------------
-  // Verifica que el rango [horaInicio, horaInicio+duracion] esté libre
-  // de otras actividades en el horario del usuario para la fecha dada.
+  // Verifica que el rango [horaInicio, horaInicio+duracion] esté libre de
+  // OTRAS REUNIONES en el horario del usuario para la fecha dada.
   // ignora la actividad con `ignorarActividadId` si se pasa (útil para
   // reprogramación).
-  async validarSlotLibre(usuarioId, fechaYmd, horaInicio, duracionMinutos, ignorarActividadId = null) {
+  //
+  // NOTA IMPORTANTE: sólo las actividades tipo REUNIÓN cuentan como
+  // obstáculo. Si el slot está ocupado por una actividad NO-reunión
+  // (valorador, auxiliar, etc.), el scheduler la va a MOVER o PARTIR
+  // automáticamente para hacerle hueco a la reunión — no rechazamos el
+  // agendamiento. Si la no-reunión es ALTA y no se puede mover, eso lo
+  // detecta `placeActivity` más adelante (reason='choca con ALTA') y se
+  // devuelve como 409 con la lista de actividades afectadas.
+  //
+  // Cuando el slot está ocupado por una REUNIÓN (o el día no tiene
+  // bloques), devuelve además `suggestions` (mismo shape que
+  // `overflowService.suggest`) para que el front muestre "otros usuarios
+  // / horas extras / mover deadline" en el mismo 409, en vez de un
+  // mensaje aislado.
+  //
+  // `opts` (opcional): { prioridad, deadline, prospectoId } — se reenvían
+  // a `overflowService.suggest` para que el cálculo de sugerencias tenga
+  // contexto. Si no se pasan, las sugerencias salen genéricas.
+  async validarSlotLibre(
+    usuarioId,
+    fechaYmd,
+    horaInicio,
+    duracionMinutos,
+    ignorarActividadId = null,
+    opts = {},
+  ) {
     const fechaLocal = parseLocalDate(fechaYmd);
     if (!fechaLocal) return { ok: false, message: "Fecha inválida." };
     const fechaStr = fmtLocalDate(fechaLocal);
@@ -560,20 +612,54 @@ class ReunionesAsistenteService {
 
     const ctx = await schedulerService.loadDayContext(usuarioId, fechaStr);
     if (!ctx || ctx.bloques.length === 0) {
-      return { ok: false, message: "El usuario no tiene bloques de horario configurados para ese día." };
+      const suggestions = await this.#safeOverflowSuggest(
+        usuarioId,
+        fechaStr,
+        finMin - iniMin,
+        opts,
+      );
+      return {
+        ok: false,
+        message: "El usuario no tiene bloques de horario configurados para ese día.",
+        suggestions,
+      };
     }
     if (ignorarActividadId) {
       ctx.eventos = ctx.eventos.filter((e) => e.actividad_id !== ignorarActividadId);
     }
-    const slots = schedulerService.computeFreeSlots(ctx);
+    // Sólo las REUNIONES cuentan como obstáculo. Filtramos el resto
+    // (valorador, auxiliares, etc.) para que NO bloqueen el slot — el
+    // scheduler se encarga de moverlas/partirlas. Ver nota en el header.
+    const ctxSoloReuniones = {
+      ...ctx,
+      eventos: ctx.eventos.filter((e) => e.esReunion === true),
+    };
+    const slots = schedulerService.computeFreeSlots(ctxSoloReuniones);
     const libre = slots.some((s) => iniMin >= s.ini && finMin <= s.fin);
     if (!libre) {
+      const suggestions = await this.#safeOverflowSuggest(
+        usuarioId,
+        fechaStr,
+        finMin - iniMin,
+        opts,
+      );
       return {
         ok: false,
         message: `El horario de ${minToHHMM(iniMin)} a ${minToHHMM(finMin)} ya está ocupado. Elegí otro horario.`,
+        suggestions,
       };
     }
     return { ok: true };
+  }
+
+  // Wrapper que llama a overflowService.suggest sin tirar si algo falla:
+  // la sugerencia es un plus, no debe romper la validación.
+  async #safeOverflowSuggest(usuarioId, fechaStr, duracion, opts) {
+    try {
+      return await overflowService.suggest(usuarioId, fechaStr, duracion, opts || {});
+    } catch {
+      return null;
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -715,10 +801,21 @@ class ReunionesAsistenteService {
     }
 
     // ---- 3.6) Validar que el slot específico esté libre ----
-    const slotVal = await this.validarSlotLibre(usuario_id, fechaStr, horaIniStr, duracion);
+    const slotVal = await this.validarSlotLibre(
+      usuario_id,
+      fechaStr,
+      horaIniStr,
+      duracion,
+      null,
+      { prioridad: prioridadNorm, deadline, prospectoId: prospecto_id },
+    );
     if (!slotVal.ok) {
       const e = new Error(slotVal.message);
       e.code = "CONFLICT";
+      e.details = {
+        reason: "slot ocupado",
+        suggestions: slotVal.suggestions || null,
+      };
       throw e;
     }
 
@@ -908,10 +1005,29 @@ class ReunionesAsistenteService {
     }
 
     // Validar que el slot específico esté libre.
-    const slotVal = await this.validarSlotLibre(act.usuario_id, fecha, horaIniNorm, minutos, id);
+    const slotVal = await this.validarSlotLibre(
+      act.usuario_id,
+      fecha,
+      horaIniNorm,
+      minutos,
+      id,
+      {
+        prioridad: act.prioridad || null,
+        deadline: act.prospectos?.fecha_entrega
+          ? (act.prospectos.fecha_entrega instanceof Date
+              ? fmtLocalDate(act.prospectos.fecha_entrega)
+              : String(act.prospectos.fecha_entrega).slice(0, 10))
+          : null,
+        prospectoId: act.prospecto_id,
+      },
+    );
     if (!slotVal.ok) {
       const e = new Error(slotVal.message);
       e.code = "CONFLICT";
+      e.details = {
+        reason: "slot ocupado",
+        suggestions: slotVal.suggestions || null,
+      };
       throw e;
     }
 
@@ -1149,10 +1265,29 @@ class ReunionesAsistenteService {
     }
 
     // Validar que el slot específico esté libre en el nuevo usuario.
-    const slotVal = await this.validarSlotLibre(nuevo_uid, fechaYmd, horaIniNorm, minutos, id);
+    const slotVal = await this.validarSlotLibre(
+      nuevo_uid,
+      fechaYmd,
+      horaIniNorm,
+      minutos,
+      id,
+      {
+        prioridad: act.prioridad || null,
+        deadline: act.prospectos?.fecha_entrega
+          ? (act.prospectos.fecha_entrega instanceof Date
+              ? fmtLocalDate(act.prospectos.fecha_entrega)
+              : String(act.prospectos.fecha_entrega).slice(0, 10))
+          : null,
+        prospectoId: act.prospecto_id,
+      },
+    );
     if (!slotVal.ok) {
       const e = new Error(slotVal.message);
       e.code = "CONFLICT";
+      e.details = {
+        reason: "slot ocupado",
+        suggestions: slotVal.suggestions || null,
+      };
       throw e;
     }
 
@@ -1407,15 +1542,10 @@ class ReunionesAsistenteService {
       throw e;
     }
 
-    // Validar que el slot específico esté libre.
-    const slotVal = await this.validarSlotLibre(uid, fechaStr, horaIniStr, duracion, id);
-    if (!slotVal.ok) {
-      const e = new Error(slotVal.message);
-      e.code = "CONFLICT";
-      throw e;
-    }
-
     // Prioridad + bloqueada vienen de la actividad. Si era null, default MEDIA.
+    // Se calculan AQUÍ (antes de validarSlotLibre) para que la sugerencia de
+    // overflow en el 409 "slot ocupado" tenga el contexto de prioridad y
+    // deadline de la actividad que se está intentando programar.
     const prioridad = ["ALTA", "MEDIA", "BAJA"].includes(
       String(act.prioridad || "").toUpperCase(),
     )
@@ -1429,11 +1559,40 @@ class ReunionesAsistenteService {
         : String(act.prospectos.fecha_entrega).slice(0, 10)
       : null;
 
-    // Scheduler.
+    // Validar que el slot específico esté libre.
+    const slotVal = await this.validarSlotLibre(
+      uid,
+      fechaStr,
+      horaIniStr,
+      duracion,
+      id,
+      { prioridad, deadline, prospectoId: act.prospecto_id },
+    );
+    if (!slotVal.ok) {
+      const e = new Error(slotVal.message);
+      e.code = "CONFLICT";
+      e.details = {
+        reason: "slot ocupado",
+        suggestions: slotVal.suggestions || null,
+      };
+      throw e;
+    }
+
+    // Scheduler. splittable=true permite partir actividades que caigan en
+    // medio del slot de la reunión (e.g. una actividad larga 9-12 con la
+    // reunión 10-11 → parte en 9-10 + 11-12).
+    //
+    // horaInicio se pasa en MINUTOS desde medianoche para que el
+    // scheduler coloque la reunión EXACTAMENTE a la hora que el usuario
+    // eligió (en vez de buscar "cualquier hueco libre del día"). Si
+    // hay una actividad no-reunión en ese rango, el scheduler la parte
+    // o la mueve para hacer lugar.
     const plan = await schedulerService.placeActivity(uid, fechaStr, duracion, {
       prioridad,
       deadline,
       ignorarActividadId: id, // por si quedó algún slot fantasma
+      splittable: true,
+      horaInicio: horaIniMin,
     });
     if (!plan.fits) {
       const overflow = await overflowService.suggest(uid, fechaStr, duracion, {
@@ -1444,6 +1603,8 @@ class ReunionesAsistenteService {
       const e = new Error(
         plan.reason === "sin bloques"
           ? `El usuario no tiene bloques de horario configurados para ese día.`
+          : plan.reason === "deadline"
+          ? `La nueva hora fin supera la fecha de entrega del prospecto.`
           : `No hay hueco en la jornada (${plan.reason || "sin capacidad"}).`,
       );
       e.code = "CONFLICT";
@@ -1451,6 +1612,7 @@ class ReunionesAsistenteService {
         reason: plan.reason,
         overflowMin: plan.overflowMin,
         mejorSoltarMin: plan.mejorSoltarMin,
+        blockedMoves: plan.blockedMoves || [],
         suggestions: overflow,
       };
       throw e;
@@ -1460,13 +1622,19 @@ class ReunionesAsistenteService {
       ? String(motivo).slice(0, 255)
       : "Programación inicial desde Asistente";
 
-    // Persistencia: aplica moves de compactación + actualiza la actividad
-    // + crea el horario_usuario.
+    // Persistencia: aplica moves de compactación y splits (particiones),
+    // luego actualiza la actividad y crea el horario_usuario de la reunión.
+    // Todo dentro de UNA transacción para que sea atómico.
     const result = await prisma.$transaction(async (tx) => {
       const moves = [...(plan.moves || [])];
-      const applyRes = moves.length
+      const splits = [...(plan.splits || [])];
+
+      const movesRes = moves.length
         ? await schedulerService.applyMoves(moves, motivoTxt)
         : { applied: 0 };
+      const splitsRes = splits.length
+        ? await schedulerService.applySplits(splits, motivoTxt)
+        : { applied: { splits: 0, overflow: 0, cascadeMoves: 0 } };
 
       const upd = await tx.actividades.update({
         where: { id },
@@ -1503,7 +1671,16 @@ class ReunionesAsistenteService {
         },
       });
 
-      return { actividad: upd, horario: hu, applied: applyRes.applied || 0 };
+      return {
+        actividad: upd,
+        horario: hu,
+        applied: {
+          moves: movesRes.applied || 0,
+          splits: splitsRes.applied?.splits || 0,
+          overflow: splitsRes.applied?.overflow || 0,
+          cascadeMoves: splitsRes.applied?.cascadeMoves || 0,
+        },
+      };
     });
 
     return {
@@ -1525,8 +1702,18 @@ class ReunionesAsistenteService {
       },
       plan: {
         reason: plan.reason,
-        moves: plan.moves,
-        movesApplied: result.applied,
+        moves: plan.moves || [],
+        splits: plan.splits || [],
+        applied: {
+          moves: result.applied.moves || 0,
+          splits: result.applied.splits || 0,
+          overflow: result.applied.overflow || 0,
+          cascadeMoves: result.applied.cascadeMoves || 0,
+        },
+        blockedMoves: [
+          ...(plan.blockedMoves || []),
+          ...(plan.interBlocked || []),
+        ],
       },
     };
   }

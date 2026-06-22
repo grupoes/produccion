@@ -1,5 +1,15 @@
 import prisma from "../config/db.js";
 
+// Mapea getDay() (0=Dom, 1=Lun..6=Sáb) al id de la tabla `dias`
+// (1=Lunes .. 6=Sábado). Domingo no existe en `dias`.
+const DAY_ID_BY_GETDAY = { 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6 };
+
+const norm = (s) =>
+  String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+
 class HorarioService {
   // Devuelve los eventos del `usuario_id` dentro del rango [desde, hasta]
   // (ambos inclusivos), listos para FullCalendar.
@@ -156,6 +166,58 @@ class HorarioService {
       }
       return ev;
     });
+  }
+
+  // Devuelve si el usuario tiene un bloque de horario configurado para el
+  // día de la semana de `fecha` (YYYY-MM-DD). Se considera "sin jornada"
+  // si: no existe el usuario, está inactivo, su tipo de jornada no es
+  // full/part time, o no hay filas en horario_jornada_detalle para ese
+  // día. Lo usa el modal de "Agregar Cliente" para mostrar un warning
+  // inline antes de programar manualmente.
+  async usuarioTieneJornada(usuarioId, fechaStr) {
+    const uid = Number(usuarioId);
+    if (!uid || !fechaStr) return { tiene_jornada: false, motivo: "Datos inválidos." };
+
+    const fm = String(fechaStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!fm) return { tiene_jornada: false, motivo: "Fecha inválida." };
+    const fechaLocal = new Date(Number(fm[1]), Number(fm[2]) - 1, Number(fm[3]));
+
+    const diaId = DAY_ID_BY_GETDAY[fechaLocal.getDay()] || null;
+    if (!diaId) {
+      // Domingo → no se trabaja en este sistema.
+      return {
+        tiene_jornada: false,
+        motivo: "Domingo: no se configura jornada.",
+      };
+    }
+
+    const usuario = await prisma.usuarios.findUnique({
+      where: { id: uid },
+      select: {
+        estado: true,
+        tipo_jornada: { select: { id: true, nombre_jornada: true } },
+      },
+    });
+    if (!usuario) return { tiene_jornada: false, motivo: "Usuario no existe." };
+    if (!usuario.estado) {
+      return { tiene_jornada: false, motivo: "Usuario inactivo." };
+    }
+    const nombreJornada = usuario.tipo_jornada?.nombre_jornada;
+    if (!nombreJornada || !norm(nombreJornada).match(/full time|part time/)) {
+      return {
+        tiene_jornada: false,
+        motivo: "El usuario no tiene tipo de jornada (full/part time).",
+      };
+    }
+
+    const count = await prisma.horario_jornada_detalle.count({
+      where: { usuario_id: uid, dia_semana: diaId, estado: true },
+    });
+
+    return {
+      tiene_jornada: count > 0,
+      motivo: count > 0 ? null : "Sin bloques de horario para este día.",
+    };
   }
 }
 

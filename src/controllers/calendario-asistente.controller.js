@@ -22,6 +22,27 @@ class CalendarioAsistenteController {
     }
   }
 
+  // GET /api/calendario-asistente/horario-ultimo?usuario_id=N
+  // Devuelve la fecha y hora del último bloque en `horario_usuario`
+  // para el usuario indicado. Usado por el modal "Programar" para
+  // pre-rellenar fecha+hora cuando el usuario ya tiene bloques
+  // registrados.
+  async getUltimoHorarioUsuario(req, res) {
+    try {
+      const usuarioId =
+        req.query.usuario_id != null ? Number(req.query.usuario_id) : null;
+      const data = await calendarioAsistenteService.getUltimoHorarioUsuario(
+        usuarioId,
+      );
+      return res.json({ success: true, data });
+    } catch (error) {
+      console.error("CalendarioAsistente.getUltimoHorarioUsuario error:", error);
+      return res
+        .status(500)
+        .json({ error: "Error interno al obtener el último horario." });
+    }
+  }
+
   // GET /api/calendario-asistente/reuniones
   // Lista las ACTIVIDADES cuya tarea es de tipo REUNION.
   // Acepta:

@@ -43,6 +43,40 @@ const fmtLocalDate = (d) => {
 };
 
 class CalendarioAsistenteService {
+  // Devuelve la fecha y la `hora_fin` del ÚLTIMO bloque registrado en
+  // `horario_usuario` para el usuario indicado (ordenado por fecha desc
+  // y, como desempate, id desc — el último insertado si hay varios en
+  // la misma fecha).
+  //
+  // Sirve para pre-rellenar el modal "Programar" con la fecha del último
+  // bloque del usuario y la HORA FIN de ese bloque (la hora en que
+  // terminó la última actividad), de modo que la nueva actividad se
+  // "enganche" justo después: si nunca tuvo bloques (usuario nuevo o
+  // sin programar nada), el front usa hoy como fecha y deja el campo
+  // hora libre para que el usuario elija.
+  //
+  // Shape de retorno (estable para el front):
+  //   { exists: true,  fecha: "YYYY-MM-DD", hora_fin: "HH:MM" }
+  //   { exists: false, fecha: null,        hora_fin: null }
+  async getUltimoHorarioUsuario(usuarioId) {
+    if (usuarioId == null) {
+      return { exists: false, fecha: null, hora_fin: null };
+    }
+    const last = await prisma.horario_usuario.findFirst({
+      where: { usuario_id: Number(usuarioId), estado: true },
+      orderBy: [{ fecha: "desc" }, { id: "desc" }],
+      select: { fecha: true, hora_fin: true },
+    });
+    if (!last) {
+      return { exists: false, fecha: null, hora_fin: null };
+    }
+    return {
+      exists: true,
+      fecha: fmtLocalDate(last.fecha),
+      hora_fin: minToHHMM(hmsToMin(last.hora_fin)),
+    };
+  }
+
   // Lista los usuarios activos excluyendo el `rol_id` indicado (típicamente
   // 1 = admin/root, para que el ASISTENTE no se asigne a sí mismo ni a
   // admins). Devuelve `id`, `usuario` y `nombre_completo` para llenar el
@@ -85,63 +119,333 @@ class CalendarioAsistenteService {
   // Asistente necesita pintar cualquier actividad del usuario
   // (reuniones, valorador, auxiliares, etc.), no solo las reuniones.
   //
-  // Devuelve cada actividad con la info del prospecto, la tarea, fechas
-  // y el estado. Se usa tanto para el sidebar como para pintar el
-  // calendario del usuario.
+  // Dos modos de salida según el flag:
+  //
+  //   * `onlySinSlot` → un objeto por ACTIVIDAD (las que aún no tienen
+  //     horario_usuario activo). Se usa para el sidebar "pendientes de
+  //     programar".
+  //
+  //   * `onlyConSlot` → un objeto por FILA de `horario_usuario` (una
+  //     actividad distribuida en varios bloques según su jornada se
+  //     serializa como N entradas, cada una con su propia fecha/hora/
+  //     duración). Es lo que necesita el calendario para pintar el
+  //     evento partido, no como un único bloque gigante. Cada entrada
+  //     lleva `actividad_id` para que el front (eventClick, eventDrop,
+  //     eventResize, modal de detalle) siga pudiendo abrir la
+  //     actividad padre.
+  //
+  // Cada objeto expone: `id` (slot o actividad), `actividad_id` (id de
+  // la actividad padre, presente en modo con-slot), `fecha_inicio`,
+  // `hora_inicio`, `tiempo_estimado_minutos`, `usuario_id`, prospecto y
+  // tarea (la misma forma en ambos modos para no romper `buildCalendarEvent`
+  // ni el sidebar).
   //
   // Parámetros:
-  //   - usuarioId: si se pasa, filtra por el usuario asignado (vía
-  //     `horario_usuario` si tiene slot, o `actividades.usuario_id` si
-  //     no).
-  //   - onlySinSlot: si true, devuelve SOLO actividades que NO tengan
-  //     una fila activa en `horario_usuario`. Se usa para el sidebar
-  //     "pendientes de programar".
-  //   - onlyConSlot: si true, devuelve SOLO actividades que SÍ tengan
-  //     una fila activa en `horario_usuario`. Se usa para pintar el
-  //     calendario del usuario (las "programadas oficialmente").
-  //
-  //   Si se pasan ambos, prevalece `onlySinSlot`. Si no se pasa
-  //   ninguno, devuelve todas (compat con vistas viejas).
+  //   - usuarioId: filtra por el usuario asignado. En modo con-slot se
+  //     filtra sobre `horario_usuario.usuario_id`; en modo sin-slot
+  //     sobre `actividades.usuario_id`.
+  //   - onlySinSlot / onlyConSlot: ver arriba. Si se pasan ambos, gana
+  //     `onlySinSlot`.
+  //   - Si no se pasa ninguno, devuelve todas las actividades (compat
+  //     con vistas viejas), una por actividad (no expandida).
   async getActividadesReunion({
     usuarioId,
     onlySinSlot,
     onlyConSlot,
   } = {}) {
-    const whereAct = {
-      estado: true,
+    // Helpers locales para reducir boilerplate del shape común.
+    // Recibe el array `prospecto_persona` (cada fila trae una `personas`
+    // relacionada). Mapea cada fila al contacto plano, filtrando las
+    // filas huérfanas (sin persona).
+    const mapContactos = (rows) =>
+      (Array.isArray(rows) ? rows : [])
+        .map((pp) => {
+          if (!pp || !pp.personas) return null;
+          const per = pp.personas;
+          return {
+            id: per.id,
+            nombres: per.nombres,
+            apellidos: per.apellidos,
+            celular: per.celular,
+            nombre_completo:
+              [per.nombres, per.apellidos].filter(Boolean).join(" ").trim() ||
+              null,
+          };
+        })
+        .filter(Boolean);
+
+    const buildProspecto = (p) => {
+      if (!p) return null;
+      const contactos = mapContactos(p.prospecto_persona || []);
+      return {
+        id: p.id,
+        titulo: p.titulo_prospecto,
+        estado_cliente: p.estado_cliente || null,
+        universidad: p.carreras?.institucion?.nombre || null,
+        carrera: p.carreras?.nombre || null,
+        nivel_academico: p.nivel_academico?.nombre || null,
+        contactos,
+        contacto_principal: contactos[0]?.nombre_completo || null,
+      };
     };
 
-    // Filtro por presencia de horario_usuario:
-    //   * onlySinSlot → sidebar de "pendientes de programar"
-    //   * onlyConSlot → calendario (las que ya tienen slot)
-    // Si se pasan ambos, gana onlySinSlot.
-    //
-    // IMPORTANTE: el usuario "asignado" vive en `horario_usuario.usuario_id`
-    // (es la fuente de verdad del scheduler). En el flujo de importación
-    // (y otros) `actividades.usuario_id` queda NULL, así que filtrar por
-    // `actividades.usuario_id` se los come. Por eso, cuando hay slot
-    // (onlyConSlot) el filtro va sobre la relación `horario_usuario`.
-    // Cuando NO hay slot (onlySinSlot) el usuario tiene que estar en
-    // `actividades.usuario_id` (es lo único disponible hasta que se
-    // programe).
-    if (onlySinSlot) {
-      whereAct.horario_usuario = { none: { estado: true } };
-      if (usuarioId != null) {
-        whereAct.usuario_id = Number(usuarioId);
-      }
-    } else if (onlyConSlot) {
-      whereAct.horario_usuario = {
-        some: { estado: true, ...(usuarioId != null ? { usuario_id: Number(usuarioId) } : {}) },
+    const buildTarea = (t) => {
+      if (!t) return null;
+      const tt = t.tipo_tarea_tarea_tipo_tareaTotipo_tarea;
+      return {
+        id: t.id,
+        nombre: t.nombre,
+        tipo_tarea: tt
+          ? { id: tt.id, tipo: tt.tipo, color: tt.color }
+          : null,
       };
-    } else if (usuarioId != null) {
-      // Modo compat (ningún flag): no aplicamos filtro de usuario para no
-      // dejar afuera actividades importadas (cuyo `actividades.usuario_id`
-      // es null y su horario_usuario es el único que tiene el dato).
-      // Si en el futuro se quiere filtrar acá, revisar este branch.
+    };
+
+    // Construye el objeto "registrado por" para una actividad. La FK es
+    // `actividades.usuario_register` (columna de auditoría: el usuario
+    // de la sesión que hizo POST al crear el potencial o la actividad,
+    // NO el asignado a la tarea — eso es `usuario_id`). Nullable en
+    // actividades legacy.
+    const buildUsuarioRegistro = (u) => {
+      if (!u) return null;
+      const nom = u.personas?.nombres || "";
+      const ape = u.personas?.apellidos || "";
+      const nombreCompleto =
+        `${nom} ${ape}`.trim() || u.usuario || `#${u.id}`;
+      return {
+        id: u.id,
+        usuario: u.usuario,
+        nombre_completo: nombreCompleto,
+      };
+    };
+
+    // ---------- MODO SIN SLOT (sidebar) -------------------------------
+    // Una entrada por actividad. Filtra por presencia/ausencia de
+    // horario_usuario.
+    if (onlySinSlot) {
+      const whereAct = {
+        estado: true,
+        horario_usuario: { none: { estado: true } },
+        ...(usuarioId != null ? { usuario_id: Number(usuarioId) } : {}),
+      };
+      const actividades = await prisma.actividades.findMany({
+        where: whereAct,
+        orderBy: [{ fecha_inicio: "desc" }, { id: "desc" }],
+        select: {
+          id: true,
+          estado_progreso: true,
+          prioridad: true,
+          estado: true,
+          color: true,
+          fecha_inicio: true,
+          hora_inicio: true,
+          tiempo_estimado_minutos: true,
+          usuario_id: true,
+          // Auditoría: id del usuario que REGISTRÓ la actividad. El
+          // schema NO declara la relación `actividades.usuario_register
+          // → usuarios` (la FK vive suelta en la DB), por eso no
+          // podemos hacer un `select` anidado acá. En su lugar
+          // hacemos una segunda query abajo para resolver los nombres.
+          usuario_register: true,
+          prospectos: {
+            select: {
+              id: true,
+              titulo_prospecto: true,
+              estado_cliente: true,
+              carreras: {
+                select: {
+                  id: true,
+                  nombre: true,
+                  institucion: { select: { id: true, nombre: true } },
+                },
+              },
+              nivel_academico: { select: { id: true, nombre: true } },
+              prospecto_persona: {
+                select: {
+                  personas: {
+                    select: {
+                      id: true,
+                      nombres: true,
+                      apellidos: true,
+                      celular: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          tarea: {
+            select: {
+              id: true,
+              nombre: true,
+              tipo_tarea_tarea_tipo_tareaTotipo_tarea: {
+                select: { id: true, tipo: true, color: true },
+              },
+            },
+          },
+        },
+        take: 200,
+      });
+
+      // Lookup batch: traer los usuarios de registro en una sola query
+      // para no hacer N+1.
+      const registerIds = Array.from(
+        new Set(
+          actividades
+            .map((a) => a.usuario_register)
+            .filter((v) => v != null),
+        ),
+      );
+      const usuariosRegistro = registerIds.length
+        ? await prisma.usuarios.findMany({
+            where: { id: { in: registerIds } },
+            select: {
+              id: true,
+              usuario: true,
+              personas: { select: { nombres: true, apellidos: true } },
+            },
+          })
+        : [];
+      const usuariosRegistroById = new Map(
+        usuariosRegistro.map((u) => [u.id, u]),
+      );
+
+      return actividades.map((a) => ({
+        id: a.id,
+        estado_progreso: a.estado_progreso,
+        prioridad: a.prioridad,
+        estado: a.estado,
+        color: a.color || null,
+        usuario_id: a.usuario_id,
+        tiene_slot: false,
+        fecha_inicio: fmtLocalDate(a.fecha_inicio),
+        hora_inicio: minToHHMM(hmsToMin(a.hora_inicio)),
+        tiempo_estimado_minutos: a.tiempo_estimado_minutos,
+        prospecto: buildProspecto(a.prospectos),
+        tarea: buildTarea(a.tarea),
+        registrado_por: buildUsuarioRegistro(
+          a.usuario_register != null
+            ? usuariosRegistroById.get(a.usuario_register)
+            : null,
+        ),
+      }));
     }
 
+    // ---------- MODO CON SLOT (calendario) ----------------------------
+    // UNA entrada por fila de horario_usuario. Esto permite pintar el
+    // calendario partido según la jornada del usuario (si la actividad
+    // ocupa 20h y se distribuye Vie 8-13 + Lun 8-13 + Mar 8-10, devuelve
+    // 3 entradas con sus fechas/horas/duraciones propias).
+    if (onlyConSlot) {
+      const whereHu = {
+        estado: true,
+        // Filtramos slots huérfanos (sin actividad padre) directamente
+        // por la FK; más barato y seguro que un filtro de relación.
+        actividad_id: { not: null },
+        ...(usuarioId != null ? { usuario_id: Number(usuarioId) } : {}),
+      };
+      const slots = await prisma.horario_usuario.findMany({
+        where: whereHu,
+        orderBy: [{ fecha: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          actividad_id: true,
+          fecha: true,
+          hora_inicio: true,
+          hora_fin: true,
+          duracion_minutos: true,
+          usuario_id: true,
+          actividades: {
+            select: {
+              id: true,
+              estado_progreso: true,
+              prioridad: true,
+              estado: true,
+              color: true,
+              tiempo_estimado_minutos: true,
+              usuario_id: true,
+              prospectos: {
+                select: {
+                  id: true,
+                  titulo_prospecto: true,
+                  estado_cliente: true,
+                  carreras: {
+                    select: {
+                      id: true,
+                      nombre: true,
+                      institucion: { select: { id: true, nombre: true } },
+                    },
+                  },
+                  nivel_academico: { select: { id: true, nombre: true } },
+                  prospecto_persona: {
+                    select: {
+                      personas: {
+                        select: {
+                          id: true,
+                          nombres: true,
+                          apellidos: true,
+                          celular: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              tarea: {
+                select: {
+                  id: true,
+                  nombre: true,
+                  tipo_tarea_tarea_tipo_tareaTotipo_tarea: {
+                    select: { id: true, tipo: true, color: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+        take: 600,
+      });
+      return slots
+        .filter((s) => s.actividades) // descarta slots huérfanos
+        .map((s) => {
+          const a = s.actividades;
+          return {
+            // id del SLOT (no de la actividad) → FullCalendar maneja
+            // cada bloque como evento independiente, permitiendo
+            // moverlos uno por uno sin "pegar" los demás.
+            id: `hu-${s.id}`,
+            actividad_id: a.id,
+            horario_usuario_id: s.id,
+            estado_progreso: a.estado_progreso,
+            prioridad: a.prioridad,
+            estado: a.estado,
+            color: a.color || null,
+            usuario_id: s.usuario_id || a.usuario_id,
+            tiene_slot: true,
+            // Datos del BLOQUE (no de la actividad): cada bloque trae su
+            // propia fecha/hora/duración. Por eso se ve partido en el
+            // calendario respetando la jornada.
+            fecha_inicio: fmtLocalDate(s.fecha),
+            hora_inicio: minToHHMM(hmsToMin(s.hora_inicio)),
+            hora_fin: minToHHMM(hmsToMin(s.hora_fin)),
+            tiempo_estimado_minutos:
+              s.duracion_minutos != null
+                ? Number(s.duracion_minutos)
+                : Number(a.tiempo_estimado_minutos) || null,
+            // Total estimado de la actividad padre (útil para el modal
+            // de detalle / tooltips).
+            actividad_total_minutos: a.tiempo_estimado_minutos,
+            prospecto: buildProspecto(a.prospectos),
+            tarea: buildTarea(a.tarea),
+          };
+        });
+    }
+
+    // ---------- MODO LEGACY (sin flags) -------------------------------
+    // Una entrada por actividad, sin filtro de slot. Mantenido para
+    // vistas viejas que llamaban al endpoint sin flags.
     const actividades = await prisma.actividades.findMany({
-      where: whereAct,
+      where: { estado: true },
       orderBy: [{ fecha_inicio: "desc" }, { id: "desc" }],
       select: {
         id: true,
@@ -158,7 +462,6 @@ class CalendarioAsistenteService {
             id: true,
             titulo_prospecto: true,
             estado_cliente: true,
-            // Universidad sale de carreras.institucion.nombre
             carreras: {
               select: {
                 id: true,
@@ -167,7 +470,6 @@ class CalendarioAsistenteService {
               },
             },
             nivel_academico: { select: { id: true, nombre: true } },
-            // Primer contacto del prospecto (para la card del sidebar).
             prospecto_persona: {
               select: {
                 personas: {
@@ -199,68 +501,20 @@ class CalendarioAsistenteService {
       },
       take: 200,
     });
-
-    return actividades.map((a) => {
-      const p = a.prospectos || null;
-      const contactos = p?.prospecto_persona
-        ? p.prospecto_persona
-            .map((pp) => pp.personas)
-            .filter(Boolean)
-            .map((per) => ({
-              id: per.id,
-              nombres: per.nombres,
-              apellidos: per.apellidos,
-              celular: per.celular,
-              nombre_completo: [per.nombres, per.apellidos]
-                .filter(Boolean)
-                .join(" ")
-                .trim() || null,
-            }))
-        : [];
-      return {
-        id: a.id,
-        estado_progreso: a.estado_progreso,
-        prioridad: a.prioridad,
-        estado: a.estado,
-        color: a.color || null,
-        usuario_id: a.usuario_id,
-        tiene_slot: (a.horario_usuario || []).length > 0,
-        // Normalizamos a strings simples para que el front no tenga que
-        // lidiar con la ambigüedad de JSON.stringify(Date) (que rompe
-        // `instanceof Date` y mete líos de timezone). Mismo patrón que
-        // reuniones-asistente.service.js#obtenerReunionDetalle.
-        fecha_inicio: fmtLocalDate(a.fecha_inicio),
-        hora_inicio: minToHHMM(hmsToMin(a.hora_inicio)),
-        tiempo_estimado_minutos: a.tiempo_estimado_minutos,
-        prospecto: p
-          ? {
-              id: p.id,
-              titulo: p.titulo_prospecto,
-              estado_cliente: p.estado_cliente || null,
-              universidad: p.carreras?.institucion?.nombre || null,
-              carrera: p.carreras?.nombre || null,
-              nivel_academico: p.nivel_academico?.nombre || null,
-              contactos,
-              // Primer contacto plano (atajo cómodo para el sidebar).
-              contacto_principal: contactos[0]?.nombre_completo || null,
-            }
-          : null,
-        tarea: a.tarea
-          ? {
-              id: a.tarea.id,
-              nombre: a.tarea.nombre,
-              tipo_tarea: a.tarea.tipo_tarea_tarea_tipo_tareaTotipo_tarea
-                ? {
-                    id: a.tarea.tipo_tarea_tarea_tipo_tareaTotipo_tarea.id,
-                    tipo: a.tarea.tipo_tarea_tarea_tipo_tareaTotipo_tarea.tipo,
-                    color:
-                      a.tarea.tipo_tarea_tarea_tipo_tareaTotipo_tarea.color,
-                  }
-                : null,
-            }
-          : null,
-      };
-    });
+    return actividades.map((a) => ({
+      id: a.id,
+      estado_progreso: a.estado_progreso,
+      prioridad: a.prioridad,
+      estado: a.estado,
+      color: a.color || null,
+      usuario_id: a.usuario_id,
+      tiene_slot: (a.horario_usuario || []).length > 0,
+      fecha_inicio: fmtLocalDate(a.fecha_inicio),
+      hora_inicio: minToHHMM(hmsToMin(a.hora_inicio)),
+      tiempo_estimado_minutos: a.tiempo_estimado_minutos,
+      prospecto: buildProspecto(a.prospectos),
+      tarea: buildTarea(a.tarea),
+    }));
   }
 }
 

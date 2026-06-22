@@ -104,6 +104,76 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   };
 
+  // Resuelve los defaults de fecha+hora para el modal "Programar" a
+  // partir del historial de `horario_usuario` del usuario seleccionado.
+  // Si tiene bloques registrados, usa la fecha del ÚLTIMO bloque y la
+  // HORA FIN de ese bloque (la hora en que terminó la última actividad)
+  // — así la nueva actividad se "engancha" justo después.
+  // Si NO tiene ninguno, deja hoy como fecha y un string vacío para que
+  // el usuario elija manualmente la hora.
+  //
+  // Acepta los ids de los inputs de fecha y hora como parámetros para
+  // poder reusarse desde el modal principal ("Programar", tabs), desde el
+  // modal legacy que se abre desde el sidebar, y desde la pestaña
+  // "Agregar Cliente" del modal unificado.
+  //
+  // También acepta, opcionalmente, refs directos a los inputs (en lugar
+  // de ids) — útil cuando los inputs están dentro de filas dinámicas
+  // clonadas desde un <template> (caso de las actividades de "Agregar
+  // Cliente") y no tienen id propio.
+  async function applyFechaHoraDefaultsFromUsuario(usuarioId, fechaElOrId, horaElOrId) {
+    const resolveEl = (e) =>
+      e instanceof HTMLElement ? e : document.getElementById(e);
+    const fechaEl = resolveEl(fechaElOrId);
+    const horaEl = resolveEl(horaElOrId);
+    if (!fechaEl || !horaEl) {
+      console.warn("[asistente-cal] apply defaults: inputs no encontrados", { fechaElOrId, horaElOrId });
+      return;
+    }
+    // Si no hay usuario seleccionado, default conservador: hoy + hora
+    // vacía (el usuario completa la hora a mano).
+    if (!usuarioId) {
+      console.log("[asistente-cal] apply defaults: sin usuario, hoy + hora vacía");
+      fechaEl.value = todayLocalYYYYMMDD();
+      horaEl.value = "";
+      return;
+    }
+    try {
+      console.log("[asistente-cal] apply defaults: consultando horario-ultimo para usuario", usuarioId);
+      const json = await fetchJSON(
+        `/api/calendario-asistente/horario-ultimo?usuario_id=${encodeURIComponent(usuarioId)}`,
+      );
+      const d = (json && json.data) || {};
+      console.log("[asistente-cal] apply defaults: respuesta", d);
+      if (d.exists && d.fecha && d.hora_fin) {
+        // Tiene historial → replicamos fecha del último bloque y hora_fin
+        // (la hora en que terminó la última actividad), de modo que la
+        // nueva actividad arranque justo después.
+        fechaEl.value = d.fecha;
+        horaEl.value = d.hora_fin;
+        console.log("[asistente-cal] apply defaults: aplicado", { fecha: d.fecha, hora: d.hora_fin });
+      } else {
+        // Sin historial → fecha = hoy, hora = vacía para que elija.
+        fechaEl.value = todayLocalYYYYMMDD();
+        horaEl.value = "";
+        console.log("[asistente-cal] apply defaults: sin historial, hoy + hora vacía");
+      }
+    } catch (err) {
+      console.error("[asistente-cal] horario-ultimo error:", err);
+      // Ante error, no rompemos el modal: defaults benignos.
+      fechaEl.value = todayLocalYYYYMMDD();
+      horaEl.value = "09:00";
+    }
+  }
+
+  // Exponemos el helper en window para que módulos hermanos (ej.
+  // `agregar-cliente.js`, que se carga como IIFE aparte y maneja
+  // actividadess dinámicamente clonadas desde un <template>) puedan
+  // reutilizar la misma lógica sin duplicar el endpoint/parsing.
+  // Sin export se rompe el árbol: agregar-cliente.js no tiene acceso
+  // al closure de este módulo.
+  window.asistenteCalApplyFechaHoraDefaults = applyFechaHoraDefaultsFromUsuario;
+
   // -------- carga de usuarios ---------------------------------------
   async function loadUsuarios() {
     if (!selUsuarios) return;
@@ -206,12 +276,26 @@
     }
   }
 
-  // Construye un evento compatible con FullCalendar v6 a partir de una
-  // actividad REUNION. Usamos `fecha_inicio` + `hora_inicio` de la
-  // actividad directamente, ya que algunas reuniones legacy no tienen
-  // fila en `horario_usuario` (ver potenciales-clientes.service.js:966-972).
+  // Construye un evento compatible con FullCalendar v6 a partir de un
+  // objeto de la API. La API puede devolver dos formas:
+  //
+  //   * Una entrada por ACTIVIDAD (legacy o `only_sin_slot`): el campo
+  //     `id` es el id numérico de la actividad y se usa para FullCalendar.
+  //   * Una entrada por FILA de `horario_usuario` (`only_con_slot`): el
+  //     campo `id` viene como string `"hu-<horario_usuario.id>"` y
+  //     `actividad_id` apunta a la actividad padre. En este modo el
+  //     evento se renderiza en la fecha/hora/duración del bloque, lo que
+  //     permite que una actividad distribuida en varios bloques se vea
+  //     partida en el calendario respetando la jornada.
+  //
+  // En ambos casos el `extendedProps.actividad_id` apunta a la actividad
+  // padre, así los handlers `eventClick` / `eventDrop` / `eventResize`
+  // siguen abriendo el modal de detalle correcto.
   function buildCalendarEvent(a) {
     const start = combineFechaHora(a.fecha_inicio, a.hora_inicio);
+    // Para bloques de horario_usuario, la duración del evento es la del
+    // BLOQUE (no la total de la actividad), así evitamos pintar 20h en un
+    // solo bloque cuando la jornada sólo soporta 5h ese día.
     const mins = Math.max(5, Number(a.tiempo_estimado_minutos) || 30);
     const end = start
       ? new Date(start.getTime() + mins * 60_000).toISOString()
@@ -220,12 +304,27 @@
     const prospectoTxt = a.prospecto?.titulo
       ? ` · ${a.prospecto.titulo}`
       : "";
-    // Color de la actividad: si no tiene, dejamos que FullCalendar use
-    // el default. Usamos el color tanto para el fondo como para el borde
-    // para que el evento se distinga visualmente.
     const color = a.color || null;
+    // Si la API ya envía `id` como string (caso con-slot "hu-…") lo
+    // respetamos; si no, prefijamos con "act-". Mantener el prefijo evita
+    // colisiones con eventos de otras fuentes que usen ids numéricos.
+    const eventId =
+      typeof a.id === "string" && a.id.startsWith("hu-")
+        ? a.id
+        : `act-${a.id}`;
+    // Actividad padre: en modo con-slot viene en `actividad_id`, en los
+    // otros modos es el propio `id`. Esto garantiza que el modal de
+    // detalle siga abriendo la actividad correcta aunque el evento en
+    // pantalla sea uno de varios bloques.
+    const parentActividadId = a.actividad_id != null
+      ? Number(a.actividad_id)
+      : Number(
+          typeof a.id === "string" && a.id.startsWith("hu-")
+            ? a.id.slice(3)
+            : a.id,
+        );
     return {
-      id: `act-${a.id}`,
+      id: eventId,
       title: `${horaTxt}${a.tarea?.nombre || "(sin tarea)"}${prospectoTxt}`,
       start: start ? start.toISOString() : null,
       end,
@@ -234,7 +333,11 @@
         ? { backgroundColor: color, borderColor: color }
         : {}),
       extendedProps: {
-        actividad_id: a.id,
+        actividad_id: parentActividadId,
+        // Guardamos el slot también, útil si en el futuro se quiere
+        // editar / mover un bloque individual.
+        horario_usuario_id:
+          a.horario_usuario_id != null ? Number(a.horario_usuario_id) : null,
         actividad: a,
       },
     };
@@ -351,7 +454,9 @@
   function reunionItemHtml(a) {
     const tareaNombre = a.tarea?.nombre || "(sin tarea)";
     const colorTipo = a.tarea?.tipo_tarea?.color || "#6d28d9";
-    const contacto = a.prospecto?.contacto_principal || null;
+    const contactos = Array.isArray(a.prospecto?.contactos)
+      ? a.prospecto.contactos.filter(Boolean)
+      : [];
     const universidad = a.prospecto?.universidad || null;
     const carrera = a.prospecto?.carrera || null;
     const nivel = a.prospecto?.nivel_academico || null;
@@ -373,6 +478,35 @@
        </div>`;
     };
 
+    // Bloque "Contactos": lista dinámica con TODOS los contactos del
+    // prospecto (no sólo el principal). El backend ya devuelve el array
+    // `prospecto.contactos` con `nombre_completo` y `celular` armado.
+    // Si la lista está vacía, mostramos el placeholder en itálica como
+    // el resto de metaRows.
+    const contactosHtml =
+      contactos.length > 0
+        ? `<div class="reunion-meta">
+             <i class="ti ti-users"></i>
+             <span title="Contactos">
+               ${contactos
+                 .map((c) => {
+                   const nombre = c.nombre_completo || [c.nombres, c.apellidos].filter(Boolean).join(" ").trim();
+                   const cel = c.celular ? ` <span class="text-muted">· ${escapeHtml(c.celular)}</span>` : "";
+                   return nombre
+                     ? `<span>${escapeHtml(nombre)}${cel}</span>`
+                     : "";
+                 })
+                 .filter(Boolean)
+                 .join('<span class="text-muted mx-1">·</span>')}
+             </span>
+           </div>`
+        : `<div class="reunion-meta">
+             <i class="ti ti-user"></i>
+             <span title="Contacto">
+               <span class="text-muted fst-italic">Sin contacto</span>
+             </span>
+           </div>`;
+
     return `
       <div class="reunion-item" data-id="${a.id}" data-nombre="${escapeHtml(tareaNombre)}" title="Tocá para programar">
         <div class="reunion-icon" style="background:${escapeHtml(colorTipo)}22;color:${escapeHtml(colorTipo)}">
@@ -388,11 +522,16 @@
                 </div>`
               : ""
           }
-          ${metaRow("ti-user", "Contacto", contacto)}
+          ${contactosHtml}
           ${metaRow("ti-building", "Universidad", universidad)}
           ${metaRow("ti-school", "Carrera", carrera)}
           ${metaRow("ti-bookmark", "Nivel académico", nivel)}
           ${metaRow("ti-clock", "Hora propuesta", hora)}
+          ${metaRow(
+            "ti-user-check",
+            "Registrado por",
+            a.registrado_por?.nombre_completo || null,
+          )}
           <div class="reunion-meta" style="margin-top:0.2rem">
             <span class="badge" style="background:${st.bg};color:${st.color}">
               <i class="ti ${st.icon}"></i> ${escapeHtml(st.txt)}
@@ -821,6 +960,9 @@
     document.getElementById("js-cal-nueva-prospecto-sel").classList.add("d-none");
     document.getElementById("js-cal-nueva-prospecto-results").classList.add("d-none");
     document.getElementById("js-cal-nueva-prospecto-results").innerHTML = "";
+    // Defaults de fecha+hora se aplican DESPUÉS de cargar el select de
+    // usuario (abajo), usando el historial de horario_usuario del usuario
+    // seleccionado. Si no se llega a cargar, fallback a hoy/09:00.
     document.getElementById("js-cal-nueva-fecha").value = todayLocalYYYYMMDD();
     document.getElementById("js-cal-nueva-hora").value = "09:00";
     document.getElementById("js-cal-nueva-duracion").value = 60;
@@ -889,6 +1031,25 @@
         ),
       )
       .join("");
+    // Asegurar que el select refleje el valor por defecto (algunos
+    // navegadores/Boostrap pueden no aplicar el atributo `selected`
+    // cuando se reasigna innerHTML, así que forzamos el valor por JS).
+    if (defaultUid) selUsuario.value = String(defaultUid);
+
+    // Defaults de fecha+hora desde el historial del usuario seleccionado.
+    // Prioridad de selección del "usuario seleccionado":
+    //   1) El dropdown del propio modal (lo que ve el usuario en el form).
+    //   2) El filtro del header (selUsuarios).
+    //   3) null → defaults hoy + hora vacía.
+    const modalSelectedUid = selUsuario.value
+      ? Number(selUsuario.value)
+      : null;
+    const effectiveUid = modalSelectedUid || (defaultUid ? Number(defaultUid) : null);
+    await applyFechaHoraDefaultsFromUsuario(
+      effectiveUid,
+      "js-cal-nueva-fecha",
+      "js-cal-nueva-hora",
+    );
 
     nuevaState.prospecto = null;
 
@@ -1198,6 +1359,22 @@
     }
     console.log("[asistente-cal] modal instance obtained", modal);
     let a = sidebarActividadesById.get(Number(actividadId));
+    // Si el item en cache no trae `registrado_por` (porque se cargó
+    // antes de ese cambio), pedimos el detalle fresco al backend para
+    // asegurarnos de mostrar quién creó la reunión.
+    if (a && !a.registrado_por) {
+      try {
+        const json = await fetchJSON(
+          `/api/calendario-asistente/reuniones/${actividadId}`,
+        );
+        if (json && json.data) {
+          a = { ...a, ...json.data };
+          sidebarActividadesById.set(Number(actividadId), a);
+        }
+      } catch (err) {
+        console.warn("[asistente-cal] no se pudo refrescar detalle:", err);
+      }
+    }
     if (!a) {
       console.log("[asistente-cal] not in cache, fetching from API…");
       try {
@@ -1218,7 +1395,32 @@
 
     // Card resumen del prospecto.
     setCalProgField("titulo", a.prospecto?.titulo || "—");
-    setCalProgField("contacto", a.prospecto?.contacto_principal || "—");
+    // Contactos: lista TODOS los del prospecto (no sólo el principal),
+    // con su celular. Si no hay ninguno, "—".
+    const progContactos = Array.isArray(a.prospecto?.contactos)
+      ? a.prospecto.contactos.filter(Boolean)
+      : [];
+    const progContactosEl = document.querySelector('[data-cal-prog="contactos"]');
+    if (progContactosEl) {
+      if (progContactos.length === 0) {
+        progContactosEl.textContent = "—";
+      } else {
+        progContactosEl.innerHTML = progContactos
+          .map((c) => {
+            const nombre =
+              c.nombre_completo ||
+              [c.nombres, c.apellidos].filter(Boolean).join(" ").trim();
+            const cel = c.celular
+              ? ` <span class="text-muted">· ${escapeHtml(c.celular)}</span>`
+              : "";
+            return nombre
+              ? `<div>${escapeHtml(nombre)}${cel}</div>`
+              : "";
+          })
+          .filter(Boolean)
+          .join("");
+      }
+    }
     setCalProgField("universidad", a.prospecto?.universidad || "—");
     setCalProgField("carrera", a.prospecto?.carrera || "—");
     setCalProgField("nivel", a.prospecto?.nivel_academico || "—");
@@ -1228,13 +1430,25 @@
     if (prioEl) {
       prioEl.innerHTML = prioridadBadgeHtml(a.prioridad);
     }
+    // "Registrado por" — usuario de la sesión que creó la actividad
+    // (auditoría, no es el asignado). Nullable en actividades legacy.
+    const regPorEl = document.querySelector('[data-cal-prog="registrado_por"]');
+    if (regPorEl) {
+      regPorEl.textContent = a.registrado_por?.nombre_completo || "—";
+    }
 
     // Defaults del formulario.
+    // IMPORTANTE: el sidebar muestra actividades SIN horario_usuario
+    // (aún no programadas formalmente), por lo que `a.fecha_inicio` /
+    // `a.hora_inicio` son los valores "marcados" al crear la actividad
+    // y deben respetarse como prefill del modal. NO los pisamos con el
+    // historial de horario_usuario (eso aplica sólo a "Agregar Cliente",
+    // donde la actividad es nueva y no tiene hora propia).
     document.getElementById("js-cal-prog-actividad-id").value = String(a.id);
     document.getElementById("js-cal-prog-fecha").value =
       a.fecha_inicio || todayLocalYYYYMMDD();
     // hora_inicio puede llegar como "HH:MM:SS"; normalizamos a "HH:MM".
-    let hora = a.hora_inicio || "09:00";
+    let hora = a.hora_inicio || "";
     if (typeof hora === "string" && hora.length >= 5) hora = hora.slice(0, 5);
     document.getElementById("js-cal-prog-hora").value = hora;
     document.getElementById("js-cal-prog-duracion").value =
@@ -1258,6 +1472,9 @@
       });
     }
     selProgUsuario.innerHTML = opciones.join("");
+    // Forzar el valor por JS para cubrir quirks de `selected` en
+    // reasignación de innerHTML.
+    if (defaultUid) selProgUsuario.value = String(defaultUid);
 
     modal.show();
   }
@@ -1277,7 +1494,7 @@
     }
     btn.disabled = true;
     try {
-      await fetchJSON(
+      const res = await fetchJSON(
         `/api/calendario-asistente/reuniones/${id}/programar`,
         {
           method: "POST",
@@ -1291,7 +1508,42 @@
           }),
         },
       );
-      showToast("success", "Reunión programada.");
+      // Toast rico: indica si se movieron, partieron o reorganizaron otras
+      // actividades para que el Asistente sepa qué se reubicó.
+      const applied = res?.plan?.applied || {
+        moves: 0,
+        splits: 0,
+        overflow: 0,
+        cascadeMoves: 0,
+      };
+      const blocked = res?.plan?.blockedMoves || [];
+      const parts = ["Reunión programada."];
+      if (applied.moves > 0) {
+        parts.push(
+          `Se movieron ${applied.moves} actividad${applied.moves === 1 ? "" : "es"}.`,
+        );
+      }
+      if (applied.splits > 0) {
+        parts.push(
+          `Se partieron ${applied.splits} actividad${applied.splits === 1 ? "" : "es"}.`,
+        );
+      }
+      if (applied.cascadeMoves > 0) {
+        parts.push(
+          `Se reorganizaron ${applied.cascadeMoves} bloque${applied.cascadeMoves === 1 ? "" : "s"} de la actividad para hacer espacio.`,
+        );
+      }
+      if (applied.overflow > 0) {
+        parts.push(
+          `Hubo ${applied.overflow} bloque${applied.overflow === 1 ? "" : "s"} que ${applied.overflow === 1 ? "pasó" : "pasaron"} al día siguiente.`,
+        );
+      }
+      if (blocked.length > 0) {
+        parts.push(
+          `${blocked.length} actividad${blocked.length === 1 ? "" : "es"} no se ${blocked.length === 1 ? "pudo" : "pudieron"} reordenar.`,
+        );
+      }
+      showToast("success", parts.join(" "));
       const modal = getModal("js-cal-programar-modal");
       if (modal) modal.hide();
       await refreshAll();
@@ -1337,6 +1589,35 @@
     if (!cont) return;
     const s = payload.suggestions || {};
     const mensaje = payload.error || leadText;
+    const blocked = payload.blockedMoves || [];
+    const blockedReasonTxt = (b) => {
+      if (b.motivo === "deadline") {
+        const dl = b.deadline
+          ? ` (entrega ${String(b.deadline).slice(0, 10)})`
+          : "";
+        return `supera la fecha de entrega${dl}`;
+      }
+      if (b.motivo === "ALTA") return "tiene prioridad ALTA";
+      if (b.motivo === "fuera_jornada")
+        return "no entra en la jornada de ese día";
+      return b.motivo || "no se puede mover";
+    };
+    const blockedHtml = blocked.length
+      ? `<h6 class="fs-xxs text-uppercase text-muted fw-semibold mt-2">
+           Actividades que no se pudieron reordenar
+         </h6>
+         <ul class="list-group list-group-flush mb-2">
+           ${blocked
+             .map(
+               (b) =>
+                 `<li class="list-group-item d-flex justify-content-between align-items-center">
+                    <span><i class="ti ti-ban me-1 text-danger"></i>Actividad #${escapeHtml(String(b.actividad_id))}</span>
+                    <span class="badge bg-danger-subtle text-danger">${escapeHtml(blockedReasonTxt(b))}</span>
+                  </li>`,
+             )
+             .join("")}
+         </ul>`
+      : "";
     const other = (s.otherAuxiliares || []).map(
       (a) =>
         `<li class="list-group-item d-flex justify-content-between align-items-center">
@@ -1352,6 +1633,7 @@
         <strong>${escapeHtml(mensaje)}</strong>
         ${payload.reason ? ` <small class="text-muted">(${escapeHtml(payload.reason)})</small>` : ""}
       </div>` +
+      blockedHtml +
       (other
         ? `<h6 class="fs-xxs text-uppercase text-muted fw-semibold">Otros usuarios con hueco</h6>
            <ul class="list-group list-group-flush mb-2">${other}</ul>`
@@ -1501,6 +1783,18 @@
         loadCalendario();
       });
     }
+    // Cuando el modal "Agregar cliente" termina de guardar, el módulo
+    // `agregar-cliente.js` dispara `cliente:creado` en `window`.
+    // Refetchamos el calendario para que el/los bloques nuevos aparezcan
+    // sin que el usuario tenga que recargar la página.
+    window.addEventListener("cliente:creado", function () {
+      loadCalendario();
+      // Si hay sidebar de reuniones, lo refrescamos también para que
+      // el nuevo cliente aparezca en la lista de "pendientes / hoy".
+      if (typeof loadReuniones === "function") {
+        try { loadReuniones(); } catch (_) {}
+      }
+    });
     if (btnNewReunion) {
       btnNewReunion.addEventListener("click", function () {
         openNuevaModal();
@@ -1568,10 +1862,32 @@
     document
       .getElementById("js-cal-nueva-aplicar")
       ?.addEventListener("click", submitNueva);
+    // Al cambiar el usuario en el modal "Programar", refrescar los
+    // defaults de fecha+hora desde su historial de horario_usuario.
+    document
+      .getElementById("js-cal-nueva-usuario")
+      ?.addEventListener("change", function () {
+        applyFechaHoraDefaultsFromUsuario(
+          this.value ? Number(this.value) : null,
+          "js-cal-nueva-fecha",
+          "js-cal-nueva-hora",
+        );
+      });
     // Programar (sidebar → modal → API).
     document
       .getElementById("js-cal-prog-aplicar")
       ?.addEventListener("click", submitProgramar);
+    // Al cambiar el usuario en el modal legacy "Programar reunión",
+    // también refrescar fecha+hora desde su historial.
+    document
+      .getElementById("js-cal-prog-usuario")
+      ?.addEventListener("change", function () {
+        applyFechaHoraDefaultsFromUsuario(
+          this.value ? Number(this.value) : null,
+          "js-cal-prog-fecha",
+          "js-cal-prog-hora",
+        );
+      });
     // CLIENTES tab: select change + refresh.
     document
       .getElementById("js-cal-clientes-select")
@@ -1584,6 +1900,9 @@
     // Mostrar/ocultar el botón "Crear reunión" según el tab activo
     const btnCrearFooter = document.getElementById("js-cal-nueva-aplicar");
     document.getElementById("js-cal-tab-clientes-btn")?.addEventListener("click", function () {
+      if (btnCrearFooter) btnCrearFooter.style.display = "none";
+    });
+    document.getElementById("js-cal-tab-agregar-cliente-btn")?.addEventListener("click", function () {
       if (btnCrearFooter) btnCrearFooter.style.display = "none";
     });
     document.getElementById("js-cal-tab-reuniones-btn")?.addEventListener("click", function () {

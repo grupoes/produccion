@@ -21,4 +21,10 @@ router.post("/sugerir", reprogramarController.sugerir);
 //   → Aplica los movimientos del plan. Si no entra, 409 con suggestions.
 router.post("/reprogramar", reprogramarController.reprogramar);
 
+// GET /api/horario/usuario-tiene-jornada?usuario_id=&fecha=
+//   → { tiene_jornada: bool, motivo?: string }. Usado por el modal
+//     "Agregar Cliente" para advertir inline cuando el usuario no
+//     tiene horario configurado para el día elegido.
+router.get("/usuario-tiene-jornada", horarioController.usuarioTieneJornada);
+
 export default router;
