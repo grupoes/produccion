@@ -41,19 +41,54 @@ const fmtLocalDate = (d) => {
   const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
 };
+const parseLocalDate = (s) => {
+  if (!s) return null;
+  if (s instanceof Date) return Number.isNaN(s.getTime()) ? null : s;
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
 
 class CalendarioAsistenteService {
-  // Devuelve la fecha y la `hora_fin` del ÚLTIMO bloque registrado en
-  // `horario_usuario` para el usuario indicado (ordenado por fecha desc
-  // y, como desempate, id desc — el último insertado si hay varios en
-  // la misma fecha).
+  // Verifica si un usuario tiene al menos un bloque en horario_usuario
+  // en una fecha específica.
+  async getUsuarioOcupaFecha(usuarioId, fechaStr) {
+    if (!usuarioId || !fechaStr) return { ocupado: false };
+    const uid = Number(usuarioId);
+    const fechaDate = parseLocalDate(fechaStr);
+    if (!fechaDate) return { ocupado: false };
+    const count = await prisma.horario_usuario.count({
+      where: { usuario_id: uid, fecha: fechaDate, estado: true },
+    });
+    return { ocupado: count > 0 };
+  }
+
+
+  // Devuelve la fecha y la HORA SUGERIDA de inicio para la próxima
+  // actividad del usuario, basada en su ÚLTIMO bloque registrado
+  // (ordenado por fecha desc y, como desempate, id desc).
   //
   // Sirve para pre-rellenar el modal "Programar" con la fecha del último
-  // bloque del usuario y la HORA FIN de ese bloque (la hora en que
-  // terminó la última actividad), de modo que la nueva actividad se
-  // "enganche" justo después: si nunca tuvo bloques (usuario nuevo o
-  // sin programar nada), el front usa hoy como fecha y deja el campo
-  // hora libre para que el usuario elija.
+  // bloque del usuario y la hora en que debería empezar la nueva
+  // actividad, de modo que se "enganche" al horario del usuario sin
+  // caer en un hueco fuera de su jornada.
+  //
+  // La hora sugerida se calcula RESPETANDO los bloques de jornada del
+  // usuario (`horario_jornada_detalle`). Casos típicos:
+  //   - Jornada 08:00-13:00 + 15:00-19:00, última actividad termina a
+  //     las 13:00 → sugerencia 15:00 (inicio del bloque de tarde).
+  //   - Última actividad termina a las 11:00 (aún dentro del bloque de
+  //     mañana) → sugerencia 11:00 (la nueva arranca justo después).
+  //   - Última actividad termina a las 18:30 (dentro del bloque de
+  //     tarde, sin más bloques después) → sugerencia 18:30 (la nueva
+  //     arranca justo después; el front deberá llevarla al día
+  //     siguiente si quiere mantenerse en jornada).
+  //   - Sin jornada configurada para ese día → se devuelve la hora_fin
+  //     literal (comportamiento histórico).
+  //
+  // Si el usuario nunca tuvo bloques, devuelve `exists:false` y el
+  // front pone hoy como fecha con hora vacía.
   //
   // Shape de retorno (estable para el front):
   //   { exists: true,  fecha: "YYYY-MM-DD", hora_fin: "HH:MM" }
@@ -62,19 +97,102 @@ class CalendarioAsistenteService {
     if (usuarioId == null) {
       return { exists: false, fecha: null, hora_fin: null };
     }
+    const uid = Number(usuarioId);
     const last = await prisma.horario_usuario.findFirst({
-      where: { usuario_id: Number(usuarioId), estado: true },
+      where: { usuario_id: uid, estado: true },
       orderBy: [{ fecha: "desc" }, { id: "desc" }],
-      select: { fecha: true, hora_fin: true },
+      select: { fecha: true, hora_fin: true, hora_inicio: true },
     });
     if (!last) {
       return { exists: false, fecha: null, hora_fin: null };
     }
+    const fechaStr = fmtLocalDate(last.fecha);
+    const horaFinMin = hmsToMin(last.hora_fin);
+
+    // Buscar la jornada del usuario para ese día de la semana y ajustar
+    // la hora sugerida al inicio del SIGUIENTE bloque de jornada si
+    // coincide con el fin del bloque actual (caso típico 13:00 con
+    // turno mañana+8h y turno tarde).
+    const fechaLocal = parseLocalDate(fechaStr);
+    const horaSugerida = await this.#ajustarHoraFinAJornada(
+      uid,
+      fechaLocal,
+      horaFinMin,
+    );
+
     return {
       exists: true,
-      fecha: fmtLocalDate(last.fecha),
-      hora_fin: minToHHMM(hmsToMin(last.hora_fin)),
+      fecha: fechaStr,
+      hora_fin: minToHHMM(horaSugerida != null ? horaSugerida : horaFinMin),
     };
+  }
+
+  // ------------------------------------------------------------------------
+  // #ajustarHoraFinAJornada: dada la hora de fin del último bloque del
+  // usuario y el día de la semana, devuelve la hora "sugerida" para la
+  // próxima actividad respetando la jornada laboral del usuario.
+  //
+  // Reglas:
+  //   - Si horaFin cae DENTRO de un bloque de jornada (incluyendo el
+  //     extremo final), buscar el SIGUIENTE bloque de jornada. Si existe,
+  //     devolver el `ini` de ese bloque (típico: tras 13:00 → 15:00).
+  //     Si NO existe (horaFin está en el último bloque del día),
+  //     devolver horaFin sin cambios (la nueva actividad arranca justo
+  //     después; ya no le queda jornada ese día).
+  //   - Si horaFin cae ANTES del primer bloque de jornada, devolver el
+  //     `ini` del primer bloque (caso raro: bloque遗留 de un día
+  //     anterior o datos sucios).
+  //   - Si horaFin cae DESPUÉS del último bloque de jornada, devolver
+  //     horaFin (caso raro: el usuario programó fuera de jornada).
+  //   - Si NO hay jornada configurada para ese día, devolver horaFin
+  //     sin cambios (comportamiento histórico).
+  // ------------------------------------------------------------------------
+  async #ajustarHoraFinAJornada(usuarioId, fechaLocal, horaFinMin) {
+    if (!fechaLocal || horaFinMin == null) return horaFinMin;
+    // dia_semana en BD: 1=Lun..6=Sáb. getDay() JS: 0=Dom..6=Sáb.
+    const getDay = fechaLocal.getDay();
+    const diaSemanaBd = getDay === 0 ? null : getDay;
+    if (!diaSemanaBd) return horaFinMin; // domingo sin jornada
+    const rows = await prisma.horario_jornada_detalle.findMany({
+      where: {
+        usuario_id: Number(usuarioId),
+        dia_semana: diaSemanaBd,
+        estado: true,
+        hora_inicio: { not: null },
+        hora_fin: { not: null },
+      },
+      orderBy: { hora_inicio: "asc" },
+      select: { hora_inicio: true, hora_fin: true },
+    });
+    const bloques = rows
+      .map((r) => ({ ini: hmsToMin(r.hora_inicio), fin: hmsToMin(r.hora_fin) }))
+      .filter((b) => b.ini != null && b.fin != null && b.fin > b.ini);
+    if (bloques.length === 0) return horaFinMin;
+
+    // ¿En qué bloque de jornada cae horaFin (inclusive en el extremo)?
+    let idx = -1;
+    for (let i = 0; i < bloques.length; i++) {
+      const b = bloques[i];
+      if (horaFinMin >= b.ini && horaFinMin <= b.fin) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx >= 0) {
+      // Coincidió con un bloque de jornada. Si horaFin está pegado al
+      // fin del bloque (horaFin === bloque.fin) Y existe un siguiente
+      // bloque, devolver el inicio del siguiente (caso típico 13:00 →
+      // 15:00). Si no, devolver horaFin (la nueva arranca justo después
+      // del bloque actual, que es lo natural).
+      const bloque = bloques[idx];
+      if (horaFinMin >= bloque.fin && idx + 1 < bloques.length) {
+        return bloques[idx + 1].ini;
+      }
+      return horaFinMin;
+    }
+    // horaFin está antes del primer bloque o después del último.
+    if (horaFinMin < bloques[0].ini) return bloques[0].ini;
+    return horaFinMin;
   }
 
   // Lista los usuarios activos excluyendo el `rol_id` indicado (típicamente
@@ -344,6 +462,7 @@ class CalendarioAsistenteService {
         actividad_id: { not: null },
         ...(usuarioId != null ? { usuario_id: Number(usuarioId) } : {}),
       };
+
       const slots = await prisma.horario_usuario.findMany({
         where: whereHu,
         orderBy: [{ fecha: "asc" }, { id: "asc" }],
@@ -433,7 +552,10 @@ class CalendarioAsistenteService {
                 ? Number(s.duracion_minutos)
                 : Number(a.tiempo_estimado_minutos) || null,
             // Total estimado de la actividad padre (útil para el modal
-            // de detalle / tooltips).
+            // de detalle / tooltips). `programarPrimeraVez` lo acumula
+            // sumando la duración del slot nuevo al valor previo, así
+            // que refleja el total acumulado (original + reuniones
+            // agregadas) y crece cuando se programa una nueva reunión.
             actividad_total_minutos: a.tiempo_estimado_minutos,
             prospecto: buildProspecto(a.prospectos),
             tarea: buildTarea(a.tarea),

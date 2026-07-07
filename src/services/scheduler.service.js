@@ -347,7 +347,6 @@ class SchedulerService {
           slot: this.#shapeSlot(horaIni, minutos),
           moves: [],
           splits: [],
-          applied: { moves: 0, splits: 0 },
           reason: "entra directo",
         };
       }
@@ -368,6 +367,7 @@ class SchedulerService {
             usuarioId: Number(usuarioId),
             deadline: opts.deadline || null,
             fechaStr: ctxIgnorando.fechaStr,
+            ignorarActividadId: ignoreId,
           },
         );
         if (splitPlan.fits) {
@@ -433,8 +433,7 @@ class SchedulerService {
             },
             blockedMoves:
               blocked.length > 0 ||
-              overflowBlocked.length > 0 ||
-              (splitPlan.interBlocked && splitPlan.interBlocked.length > 0)
+              overflowBlocked.length > 0
                 ? [
                     ...blocked,
                     ...overflowBlocked.map((sp) => ({
@@ -443,16 +442,14 @@ class SchedulerService {
                       deadline: null,
                       propuesta: null,
                     })),
-                    ...(splitPlan.interBlocked || []),
                   ]
                 : undefined,
+            disableBlocks: splitPlan.disableBlocks || [],
+            affectedGaps: splitPlan.affectedGaps || [],
             reason: `partiendo ${overflowAccepted.length} actividad(es)`,
           };
         }
       }
-      // Si splittable=false o splitPlan no fits, devolvemos fits:false.
-      // (Ya validamos A1 inBlock + A2 sin ALTA, así que lo único que
-      // puede fallar es que el split de los movibles no cierre.)
       return {
         fits: false,
         reason: "no se pudo reordenar",
@@ -650,8 +647,7 @@ class SchedulerService {
           },
           blockedMoves:
             blocked.length > 0 ||
-            overflowBlocked.length > 0 ||
-            (splitPlan.interBlocked && splitPlan.interBlocked.length > 0)
+            overflowBlocked.length > 0
               ? [
                   ...blocked,
                   ...overflowBlocked.map((sp) => ({
@@ -660,9 +656,10 @@ class SchedulerService {
                     deadline: null,
                     propuesta: null,
                   })),
-                  ...(splitPlan.interBlocked || []),
                 ]
               : undefined,
+          disableBlocks: splitPlan.disableBlocks || [],
+          affectedGaps: splitPlan.affectedGaps || [],
           reason: `partiendo ${overflowAccepted.length} actividad(es)`,
         };
       }
@@ -731,11 +728,23 @@ class SchedulerService {
   async #isFutureDateValid(usuarioId, fechaYmd) {
     const fechaLocal = parseLocalDate(fechaYmd);
     if (!fechaLocal) return { ok: false, motivo: "fecha_invalida" };
-    const fechaStr = fmtLocalDate(fechaLocal);
+
+    // FIX QUIRÚRGICO TZ: la columna `feriados.fecha` es DATE y Prisma la
+    // sirve como UTC midnight. Si construimos `new Date(fechaYmd)` se
+    // interpreta como LOCAL midnight (Lima = UTC-5 → 05:00 UTC) y la
+    // comparación falla. Construimos un Date en UTC midnight con los
+    // componentes locales del día wall-clock que pidió el usuario.
+    const fechaUtcMidnight = new Date(
+      Date.UTC(
+        fechaLocal.getFullYear(),
+        fechaLocal.getMonth(),
+        fechaLocal.getDate(),
+      ),
+    );
 
     try {
       const feriado = await prisma.feriados.findFirst({
-        where: { fecha: new Date(fechaStr), estado: true },
+        where: { fecha: fechaUtcMidnight, estado: true },
         select: { id: true, nombre: true },
       });
       if (feriado) {
@@ -753,11 +762,14 @@ class SchedulerService {
         });
         const fnac = u?.personas?.fecha_nacimiento;
         if (fnac) {
+          // FIX QUIRÚRGICO TZ: leer con getUTC* porque `personas.fecha_nacimiento`
+          // viene como UTC midnight desde Prisma; getDate()/getMonth() local
+          // cae en el día anterior en servidores TZ!=UTC.
           const d = fnac instanceof Date ? fnac : new Date(fnac);
           if (
             !Number.isNaN(d.getTime()) &&
-            d.getDate() === fechaLocal.getDate() &&
-            d.getMonth() === fechaLocal.getMonth()
+            d.getUTCDate() === fechaLocal.getDate() &&
+            d.getUTCMonth() === fechaLocal.getMonth()
           ) {
             return { ok: false, motivo: "cumpleanios" };
           }
@@ -769,1189 +781,7 @@ class SchedulerService {
       // no bloqueamos — sólo logueamos internamente.
       return { ok: true };
     }
-  }
-
-  // ------------------------------------------------------------------------
-  // #computeOverflow: reparte `minutosRestantes` en bloques a partir de
-  // `fechaInicio` (string YYYY-MM-DD, el día SIGUIENTE al slot de la
-  // reunión), siguiendo las jornadas del usuario. Se detiene cuando se
-  // acabaron los minutos, cuando se llega al `deadline`, o cuando se
-  // superaron `maxDias` (default 7) días.
-  //
-  // NUEVO: cascade multi-día. Si se pasa `actividadId`, antes de caer al
-  // comportamiento default (llenar desde inicio), busca bloques de ESA
-  // actividad en el día. Si encuentra, intenta absorber el overflow
-  // corriendo el último bloque dentro de su bloque de jornada (mantiene
-  // duración) y colocando el overflow en el espacio liberado. Si no
-  // cabe correr, intenta expandir al final. Si tampoco, fallback a
-  // llenar desde inicio.
-  //
-  // Restricciones aplicadas:
-  //   - Feriados y cumpleaños del usuario (vía `validateFechaParaUsuario`
-  //     si se pasa `reunionesService`, o vía un predicado `isDateValid`).
-  //   - Deadline duro: si el último día de overflow cae después del
-  //     deadline → se descarta y se devuelve `deadlineExceeded: true`.
-  //   - No se agenda en días sin jornada configurada (se cuentan como
-  //     `lostDays` y se sigue).
-  //
-  // Cada bloque devuelto es:
-  //   { fecha: 'YYYY-MM-DD', hi: 'HH:MM', hf: 'HH:MM', len: minutos }
-  //
-  // Retorna:
-  //   {
-  //     overflow:     [{fecha, hi, hf, len}, ...],  // bloques NUEVOS a insertar
-  //     cascadeMoves: [{horario_id, hi, hf, fecha, len}, ...],
-  //                                               // UPDATEs a bloques
-  //                                               // existentes (corridos
-  //                                               // o expandidos para
-  //                                               // hacer espacio)
-  //     lostDays:     [{fecha, motivo: 'feriado'|'cumple'|'sin jornada'}],
-  //     deadlineExceeded: bool,
-  //     remainingMinutes: minutos que no cupieron,
-  //   }
-  // ------------------------------------------------------------------------
-
-  // ------------------------------------------------------------------------
-  // #loadActividadBlocks: carga TODOS los horario_usuario de una actividad
-  // (a través de todos los días), ordenados por fecha + hora_inicio.
-  // Devuelve [{horario_id, actividad_id, usuario_id, fechaStr, ini, fin, len}].
-  // Usado por #computeOverflow para cascade PROPAGATIVO: si un bloque se
-  // expande/corre y empuja al siguiente, también hay que reorganizarlo.
-  // ------------------------------------------------------------------------
-  async #loadActividadBlocks(actividadId) {
-    const aid = Number(actividadId);
-    if (!aid) return [];
-    try {
-      const rows = await prisma.$queryRawUnsafe(
-        `SELECT id, actividad_id, usuario_id,
-                TO_CHAR(fecha, 'YYYY-MM-DD') AS fecha,
-                TO_CHAR(hora_inicio::time, 'HH24:MI:SS') AS hi,
-                TO_CHAR(hora_fin::time,    'HH24:MI:SS') AS hf,
-                duracion_minutos
-           FROM horario_usuario
-          WHERE actividad_id = $1 AND estado = true
-          ORDER BY fecha ASC, hora_inicio ASC`,
-        aid,
-      );
-      return (rows || [])
-        .map((r) => {
-          const ini = toMin(r.hi);
-          const fin = toMin(r.hf);
-          return {
-            horario_id: Number(r.id),
-            actividad_id: Number(r.actividad_id),
-            usuario_id: Number(r.usuario_id),
-            fechaStr: String(r.fecha || "").slice(0, 10),
-            ini,
-            fin,
-            len:
-              r.duracion_minutos != null
-                ? Number(r.duracion_minutos)
-                : ini != null && fin != null
-                ? fin - ini
-                : 0,
-          };
-        })
-        .filter((b) => b.ini != null && b.fin != null);
-    } catch (_) {
-      return [];
-    }
-  }
-
-  // ------------------------------------------------------------------------
-  // #loadUsuarioBlocksEnRango: carga TODOS los horario_usuario de un usuario
-  // en un rango de fechas, con metadata de la actividad (bloqueada,
-  // prioridad, deadline, estado_progreso) y del prospecto.
-  //
-  // Usado por #computeOverflow cuando cascadeInterActividad=true: además
-  // de reorganizar la actividad partida, reorganiza bloques de OTRAS
-  // actividades del usuario en el rango respetando ALTA/deadline/jornada.
-  //
-  // Devuelve [{horario_id, actividad_id, usuario_id, fechaStr, ini, fin, len,
-  //   bloqueada, prioridad, estado_progreso, deadline, esReunion}].
-  // ------------------------------------------------------------------------
-  async #loadUsuarioBlocksEnRango(usuarioId, fechaDesde, fechaHasta) {
-    const uid = Number(usuarioId);
-    if (!uid || !fechaDesde || !fechaHasta) return [];
-    try {
-      const rows = await prisma.$queryRawUnsafe(
-        `SELECT
-           hu.id              AS horario_id,
-           hu.actividad_id,
-           hu.usuario_id,
-           TO_CHAR(hu.fecha, 'YYYY-MM-DD')             AS fecha,
-           TO_CHAR(hu.hora_inicio::time, 'HH24:MI:SS') AS hi,
-           TO_CHAR(hu.hora_fin::time,    'HH24:MI:SS') AS hf,
-           hu.duracion_minutos,
-           hu.tipo            AS hu_tipo,
-           a.prioridad,
-           a.bloqueada,
-           a.estado_progreso,
-           a.prospecto_id,
-           TO_CHAR(p.fecha_entrega, 'YYYY-MM-DD')      AS deadline
-         FROM horario_usuario hu
-         LEFT JOIN actividades a ON a.id = hu.actividad_id
-         LEFT JOIN prospectos p  ON p.id = a.prospecto_id
-         WHERE hu.usuario_id = $1
-           AND hu.estado = true
-           AND hu.fecha BETWEEN $2::date AND $3::date
-         ORDER BY hu.fecha ASC, hu.hora_inicio ASC`,
-        uid,
-        fechaDesde,
-        fechaHasta,
-      );
-      return (rows || [])
-        .map((r) => {
-          const ini = toMin(r.hi);
-          const fin = toMin(r.hf);
-          return {
-            horario_id: Number(r.horario_id),
-            actividad_id: r.actividad_id ? Number(r.actividad_id) : null,
-            usuario_id: Number(r.usuario_id),
-            fechaStr: String(r.fecha || "").slice(0, 10),
-            ini,
-            fin,
-            len:
-              r.duracion_minutos != null
-                ? Number(r.duracion_minutos)
-                : ini != null && fin != null
-                ? fin - ini
-                : 0,
-            bloqueada: r.bloqueada === true || r.bloqueada === "true",
-            prioridad: r.prioridad || null,
-            estado_progreso: r.estado_progreso || null,
-            deadline: r.deadline || null,
-            esReunion: r.hu_tipo === "reunion",
-          };
-        })
-        .filter((b) => b.ini != null && b.fin != null);
-    } catch (_) {
-      return [];
-    }
-  }
-
-  async #computeOverflow({
-    usuarioId,
-    fechaInicio,
-    minutosRestantes,
-    deadline,
-    actividadId = null,
-    maxDias = 7,
-    isDateValid,
-    slotFin = null,
-    cascadeInterActividad = false,
-  }) {
-    const overflow = [];
-    const lostDays = [];
-    const cascadeMoves = [];
-
-    if (!usuarioId || !fechaInicio || minutosRestantes <= 0) {
-      return {
-        overflow,
-        cascadeMoves,
-        interBlocked: [],
-        lostDays,
-        deadlineExceeded: false,
-        remainingMinutes: minutosRestantes || 0,
-      };
-    }
-
-    let cursor = parseLocalDate(fechaInicio);
-    if (!cursor) {
-      return {
-        overflow,
-        cascadeMoves,
-        interBlocked: [],
-        lostDays,
-        deadlineExceeded: false,
-        remainingMinutes: minutosRestantes,
-      };
-    }
-
-    let remaining = Math.floor(minutosRestantes);
-    const deadlineDate = deadline ? parseLocalDate(deadline) : null;
-    const slotFinMin = slotFin != null ? Math.floor(Number(slotFin)) : null;
-
-    // interBlocked: actividades destino del cascade inter-actividad que
-    // no se pudieron reorganizar (motivos: 'ALTA', 'deadline', 'fuera_jornada').
-    const interBlocked = [];
-
-    // Helper local: valida si una propuesta (fecha, hi, hf) excede el
-    // deadline del bloque. Devuelve true si la nueva hf cae DESPUÉS del
-    // final del día deadline.
-    const propuestaExcedeDeadline = (b, propuesta) => {
-      if (!b.deadline) return false;
-      const evt = { deadline: b.deadline };
-      const move = {
-        fecha: propuesta.fecha || fechaStr,
-        hi: minToHHMM(propuesta.hi),
-        hf: minToHHMM(propuesta.hf),
-      };
-      return this.#moveExceedsDeadline(evt, move);
-    };
-
-    // Cargar TODOS los bloques de la actividad para propagación. Si
-    // un bloque se expande/corre en este día y empuja al siguiente,
-    // también hay que reorganizarlo; si no cabe en el bloque de jornada,
-    // se mueve al día siguiente (cambiando `fechaStr`).
-    let allBlocks = actividadId
-      ? await this.#loadActividadBlocks(actividadId)
-      : [];
-    // Filtrar por fechaInicio. Si además nos pasan `slotFin` (caso
-    // cascade mismo día desde #trySplit), permitimos el día del slot
-    // pero SÓLO para bloques cuyo hora_inicio >= slotFin (los que están
-    // después de la reunión y pueden absorber el gap).
-    if (slotFinMin != null) {
-      allBlocks = allBlocks.filter(
-        (b) =>
-          b.fechaStr > fechaInicio ||
-          (b.fechaStr === fechaInicio && b.ini >= slotFinMin),
-      );
-    } else {
-      allBlocks = allBlocks.filter((b) => b.fechaStr >= fechaInicio);
-    }
-
-    // Capturar copia ANTES de cualquier reorganización (fase A/B/C).
-    // Se usa en #calcularExtensionActividad para comparar el último
-    // bloque original con el último bloque del plan y decidir si
-    // activamos push-forward sobre actividades SIGUIENTES.
-    const bloquesOriginalesActividad = allBlocks.map((b) => ({ ...b }));
-
-    for (let i = 0; i < maxDias && remaining > 0; i++) {
-      const fechaStr = fmtLocalDate(cursor);
-
-      // 1) Deadline check: si este día cae después del deadline, paramos.
-      if (deadlineDate && cursor.getTime() > deadlineDate.getTime()) {
-        return {
-          overflow,
-          cascadeMoves,
-          interBlocked,
-          lostDays,
-          deadlineExceeded: true,
-          remainingMinutes: remaining,
-        };
-      }
-
-      // 2) Validez de fecha (feriado/cumple).
-      let valid = { ok: true };
-      if (typeof isDateValid === "function") {
-        try {
-          valid = await isDateValid(fechaStr);
-        } catch (_) {
-          valid = { ok: true };
-        }
-      }
-      if (!valid.ok) {
-        lostDays.push({ fecha: fechaStr, motivo: valid.motivo || "no_disponible" });
-        cursor = new Date(cursor);
-        cursor.setDate(cursor.getDate() + 1);
-        continue;
-      }
-
-      // 3) Cargar jornada del día.
-      const ctx = await this.loadDayContext(usuarioId, fechaStr);
-      if (!ctx || ctx.bloques.length === 0) {
-        lostDays.push({ fecha: fechaStr, motivo: "sin_jornada" });
-        cursor = new Date(cursor);
-        cursor.setDate(cursor.getDate() + 1);
-        continue;
-      }
-
-      // -----------------------------------------------------------------
-      // 3.5) CASCADE INTER-ACTIVIDAD (opcional)
-      //
-      // Si cascadeInterActividad=true, intentamos absorber `remaining`
-      // reorganizando bloques de OTRAS actividades del usuario en el día
-      // (no la actividad partida). Esto respeta:
-      //   - ALTA (bloqueada): nunca se mueve.
-      //   - Estado_progreso === 'completada': nunca se mueve.
-      //   - esReunion: las reuniones no se mueven para hacer hueco.
-      //   - deadline del prospecto: si la nueva hora supera el deadline,
-      //     se descarta y se reporta en interBlocked con motivo 'deadline'.
-      //   - Jornada del usuario: si la nueva hora no entra en el bloque
-      //     de jornada, se descarta y se reporta con 'fuera_jornada'.
-      //
-      // Estrategia:
-      //   PHASE A: usar huecos libres entre actividades (sin mover nada).
-      //   PHASE B: reorganizar (correr/expandir) bloques de otras act.
-      // -----------------------------------------------------------------
-      if (cascadeInterActividad) {
-        const interBlocksRaw = await this.#loadUsuarioBlocksEnRango(
-          usuarioId,
-          fechaStr,
-          fechaStr,
-        );
-        const interBlocks = interBlocksRaw.filter(
-          (b) =>
-            !b.bloqueada &&
-            (b.estado_progreso || "pendiente") !== "completada" &&
-            !b.esReunion &&
-            b.actividad_id !== actividadId,
-        );
-
-        // PHASE A — usar huecos libres del día (sin mover actividades).
-        const huecosLibres = this.computeFreeSlots(ctx);
-        for (const hueco of huecosLibres) {
-          if (remaining <= 0) break;
-          const libre = hueco.fin - hueco.ini;
-          const len = Math.min(remaining, libre);
-          if (len > 0) {
-            overflow.push({
-              fecha: fechaStr,
-              hi: minToHHMM(hueco.ini),
-              hf: minToHHMM(hueco.ini + len),
-              len,
-            });
-            remaining -= len;
-          }
-        }
-
-        // PHASE B — reorganizar bloques de otras actividades.
-        if (remaining > 0 && interBlocks.length > 0) {
-          const bloquesQueQuedan = [];
-          for (const bloque of interBlocks) {
-            if (remaining <= 0) break;
-            const bloqueJornada = ctx.bloques.find(
-              (b) => b.ini <= bloque.ini && bloque.fin <= b.fin,
-            );
-            if (!bloqueJornada) {
-              bloquesQueQuedan.push(bloque);
-              continue;
-            }
-
-            // Choque con bloque anterior ya procesado en este día.
-            if (bloquesQueQuedan.length > 0) {
-              const ant = bloquesQueQuedan[bloquesQueQuedan.length - 1];
-              if (ant.fin > bloque.ini) {
-                const nuevaIni = ant.fin;
-                const nuevaHf = nuevaIni + bloque.len;
-                const propuesta = {
-                  hi: nuevaIni,
-                  hf: nuevaHf,
-                  fecha: fechaStr,
-                };
-                if (propuestaExcedeDeadline(bloque, propuesta)) {
-                  interBlocked.push({
-                    actividad_id: bloque.actividad_id,
-                    motivo: "deadline",
-                    deadline: bloque.deadline || null,
-                    propuesta: {
-                      hi: minToHHMM(nuevaIni),
-                      hf: minToHHMM(nuevaHf),
-                    },
-                  });
-                  continue;
-                }
-                if (nuevaHf > bloqueJornada.fin) {
-                  // No cabe correr dentro de la jornada. Intentar día
-                  // siguiente; si no, reportar 'fuera_jornada'.
-                  const nextDate = new Date(cursor);
-                  nextDate.setDate(nextDate.getDate() + 1);
-                  const nextStr = fmtLocalDate(nextDate);
-                  // Validar jornada del día siguiente antes de comprometer.
-                  const ctxNext = await this.loadDayContext(
-                    usuarioId,
-                    nextStr,
-                  );
-                  if (
-                    !ctxNext ||
-                    ctxNext.bloques.length === 0 ||
-                    propuestaExcedeDeadline(bloque, {
-                      hi: bloque.ini,
-                      hf: bloque.fin,
-                      fecha: nextStr,
-                    })
-                  ) {
-                    interBlocked.push({
-                      actividad_id: bloque.actividad_id,
-                      motivo: "fuera_jornada",
-                      deadline: bloque.deadline || null,
-                      propuesta: {
-                        hi: minToHHMM(bloque.ini),
-                        hf: minToHHMM(bloque.fin),
-                      },
-                    });
-                    continue;
-                  }
-                  cascadeMoves.push({
-                    horario_id: bloque.horario_id,
-                    actividad_id: bloque.actividad_id,
-                    hi: minToHHMM(bloque.ini),
-                    hf: minToHHMM(bloque.fin),
-                    fecha: nextStr,
-                    len: bloque.len,
-                    inter: true,
-                  });
-                  bloque.fechaStr = nextStr;
-                  continue;
-                }
-                // Cabe correr.
-                cascadeMoves.push({
-                  horario_id: bloque.horario_id,
-                  actividad_id: bloque.actividad_id,
-                  hi: minToHHMM(nuevaIni),
-                  hf: minToHHMM(nuevaHf),
-                  fecha: fechaStr,
-                  len: bloque.len,
-                  inter: true,
-                });
-                bloque.ini = nuevaIni;
-                bloque.fin = nuevaHf;
-              }
-            }
-
-            // EXPANDIR al final del bloque de jornada con `remaining`.
-            // Si el bloque está ANTES del slot (bloque.fin <= slotIni),
-            // limitamos la expansión a slotIni para no invadir el horario
-            // de la reunión. Para bloques después del slot, no aplica.
-            let maxExpansionFin = bloqueJornada.fin;
-            if (
-              slotFinMin != null &&
-              fechaStr === fechaInicio &&
-              bloque.fin <= slotFinMin
-            ) {
-              // El bloque está antes del slot: puede expandirse hasta
-              // el inicio del slot (slotIni) como máximo.
-              maxExpansionFin = Math.min(maxExpansionFin, slotFinMin);
-            }
-            const espacioAlFinal = maxExpansionFin - bloque.fin;
-            const expansion = Math.min(Math.max(0, espacioAlFinal), remaining);
-            if (expansion > 0) {
-              const nuevaHf = bloque.fin + expansion;
-              const propuesta = {
-                hi: bloque.ini,
-                hf: nuevaHf,
-                fecha: fechaStr,
-              };
-              if (propuestaExcedeDeadline(bloque, propuesta)) {
-                interBlocked.push({
-                  actividad_id: bloque.actividad_id,
-                  motivo: "deadline",
-                  deadline: bloque.deadline || null,
-                  propuesta: {
-                    hi: minToHHMM(bloque.ini),
-                    hf: minToHHMM(nuevaHf),
-                  },
-                });
-              } else {
-                cascadeMoves.push({
-                  horario_id: bloque.horario_id,
-                  actividad_id: bloque.actividad_id,
-                  hi: minToHHMM(bloque.ini),
-                  hf: minToHHMM(nuevaHf),
-                  fecha: fechaStr,
-                  len: bloque.len + expansion,
-                  inter: true,
-                });
-                bloque.fin += expansion;
-                bloque.len += expansion;
-                remaining -= expansion;
-              }
-            }
-
-            bloquesQueQuedan.push(bloque);
-          }
-        }
-      }
-
-      // 4) CASCADE PROPAGATIVO: iterar bloques del día en orden
-      //    cronológico. Para cada bloque (excepto el primero), si el
-      //    bloque ANTERIOR lo empuja (choque), reorganizarlo. Luego
-      //    expandir al máximo dentro de su bloque de jornada.
-      //
-      //    Si un bloque no cabe en su bloque de jornada después de
-      //    reorganizar, se mueve al día siguiente (cambiando `fechaStr`
-      //    en allBlocks; el bloque aparecerá cuando iteremos ese día).
-      const bloquesHoy = allBlocks
-        .filter((b) => b.fechaStr === fechaStr)
-        .sort((a, b) => a.ini - b.ini);
-
-      if (bloquesHoy.length === 0) {
-        // Sin bloques de esta actividad en el día.
-        //
-        // Caso especial: si es EL DÍA DEL SLOT y no hay bloques
-        // posteriores, NO creamos nada aquí. Crear al inicio del bloque
-        // de jornada pondría el overflow ANTES del slot (lo cual es
-        // absurdo: desplazaría el bloque hacia el pasado). Mejor pasar
-        // al día siguiente.
-        const esDiaDelSlot =
-          slotFinMin != null && fechaStr === fechaInicio;
-        if (esDiaDelSlot) {
-          cursor = new Date(cursor);
-          cursor.setDate(cursor.getDate() + 1);
-          continue;
-        }
-        // Días futuros: crear bloque nuevo al inicio del primer bloque
-        // de jornada (comportamiento legacy).
-        const bloqueJornada = ctx.bloques[0];
-        const libre = bloqueJornada.fin - bloqueJornada.ini;
-        const len = Math.min(remaining, libre);
-        if (len > 0) {
-          overflow.push({
-            fecha: fechaStr,
-            hi: minToHHMM(bloqueJornada.ini),
-            hf: minToHHMM(bloqueJornada.ini + len),
-            len,
-          });
-          remaining -= len;
-        } else {
-          cursor = new Date(cursor);
-          cursor.setDate(cursor.getDate() + 1);
-          continue;
-        }
-      } else {
-        // bloquesQueQuedanEnEsteDia: subconjunto de bloquesHoy que
-        // NO se movieron al día siguiente durante esta iteración.
-        const bloquesQueQuedanEnEsteDia = [];
-        let absorbedAlgo = false;
-
-        for (let j = 0; j < bloquesHoy.length && remaining > 0; j++) {
-          const bloque = bloquesHoy[j];
-          const bloqueJornada = ctx.bloques.find(
-            (b) => b.ini <= bloque.ini && bloque.fin <= b.fin,
-          );
-          if (!bloqueJornada) {
-            bloquesQueQuedanEnEsteDia.push(bloque);
-            continue;
-          }
-
-          // Verificar choque con bloque anterior procesado.
-          if (bloquesQueQuedanEnEsteDia.length > 0) {
-            const bloqueAnterior =
-              bloquesQueQuedanEnEsteDia[bloquesQueQuedanEnEsteDia.length - 1];
-            if (bloqueAnterior.fin > bloque.ini) {
-              const duracion = bloque.len;
-              const nuevaIni = bloqueAnterior.fin;
-              const nuevaHf = nuevaIni + duracion;
-
-              if (nuevaHf <= bloqueJornada.fin) {
-                // Cabe correr dentro del bloque de jornada.
-                cascadeMoves.push({
-                  horario_id: bloque.horario_id,
-                  actividad_id: bloque.actividad_id,
-                  hi: minToHHMM(nuevaIni),
-                  hf: minToHHMM(nuevaHf),
-                  fecha: fechaStr,
-                  len: duracion,
-                });
-                bloque.ini = nuevaIni;
-                bloque.fin = nuevaHf;
-              } else {
-                // No cabe. Mover al día siguiente (cascade move con
-                // cambio de fecha). El bloque aparecerá en allBlocks
-                // cuando iteremos el día siguiente.
-                const nextDate = new Date(cursor);
-                nextDate.setDate(nextDate.getDate() + 1);
-                const nextFechaStr = fmtLocalDate(nextDate);
-                cascadeMoves.push({
-                  horario_id: bloque.horario_id,
-                  actividad_id: bloque.actividad_id,
-                  hi: minToHHMM(bloque.ini),
-                  hf: minToHHMM(bloque.fin),
-                  fecha: nextFechaStr,
-                  len: bloque.len,
-                });
-                bloque.fechaStr = nextFechaStr;
-                // No agregar a bloquesQueQuedanEnEsteDia.
-                continue;
-              }
-            }
-          }
-
-          // EXPANDIR al máximo dentro del bloque de jornada.
-          const espacioAlFinal = bloqueJornada.fin - bloque.fin;
-          const expansion = Math.min(Math.max(0, espacioAlFinal), remaining);
-          if (expansion > 0) {
-            cascadeMoves.push({
-              horario_id: bloque.horario_id,
-              actividad_id: bloque.actividad_id,
-              hi: minToHHMM(bloque.ini),
-              hf: minToHHMM(bloque.fin + expansion),
-              fecha: fechaStr,
-              len: bloque.len + expansion,
-            });
-            bloque.fin += expansion;
-            bloque.len += expansion;
-            remaining -= expansion;
-            absorbedAlgo = true;
-          }
-
-          bloquesQueQuedanEnEsteDia.push(bloque);
-        }
-
-        // Si quedó remaining, intentar crear bloque nuevo al final del
-        // último bloque de la actividad en el día.
-        if (remaining > 0 && bloquesQueQuedanEnEsteDia.length > 0) {
-          const ultimoBloque =
-            bloquesQueQuedanEnEsteDia[bloquesQueQuedanEnEsteDia.length - 1];
-          const bloqueJornadaUltimo = ctx.bloques.find(
-            (b) =>
-              b.ini <= ultimoBloque.fin && ultimoBloque.fin <= b.fin,
-          );
-          if (bloqueJornadaUltimo) {
-            const libre = bloqueJornadaUltimo.fin - ultimoBloque.fin;
-            const len = Math.min(remaining, libre);
-            if (len > 0) {
-              overflow.push({
-                fecha: fechaStr,
-                hi: minToHHMM(ultimoBloque.fin),
-                hf: minToHHMM(ultimoBloque.fin + len),
-                len,
-              });
-              remaining -= len;
-            }
-          }
-        }
-        // Si NO quedó nada en este día y no se absorbió nada, seguir.
-        if (
-          remaining > 0 &&
-          bloquesQueQuedanEnEsteDia.length === 0 &&
-          !absorbedAlgo
-        ) {
-          // Todos los bloques se movieron al día siguiente; nada que
-          // hacer aquí. El loop externo seguirá al día siguiente.
-        }
-      }
-
-      cursor = new Date(cursor);
-      cursor.setDate(cursor.getDate() + 1);
-    }
-
-    // -----------------------------------------------------------------
-    // PUSH-FORWARD CASCADE
-    //
-    // Si la actividad partida se extendió (último bloque del plan > último
-    // bloque original) y se activó `cascadeInterActividad`, las
-    // actividades SIGUIENTES en orden cronológico pueden haber quedado
-    // superpuestas con la nueva posición. Las reorganizamos moviéndolas
-    // al día siguiente que mantenga su `ini` original, respetando:
-    //   - ALTA (bloqueada): no se mueve.
-    //   - Estado_progreso === 'completada': no se mueve.
-    //   - esReunion: no se mueve (las reuniones se gestionan aparte).
-    //   - deadline del prospecto: si excede, se bloquea.
-    //   - jornada: si no cabe en ningún día futuro (hasta 30), se bloquea.
-    // -----------------------------------------------------------------
-    if (cascadeInterActividad && actividadId) {
-      const extensionMin = this.#calcularExtensionActividad(
-        actividadId,
-        bloquesOriginalesActividad,
-        cascadeMoves,
-        overflow,
-      );
-      if (extensionMin > 0) {
-        // planFinMs = hora_fin absoluta del último bloque post-cascade.
-        // Se calcula desde los cascadeMoves + overflow actuales (mismo
-        // cómputo que #calcularExtensionActividad pero devolviendo ms en
-        // lugar de minutos).
-        const planCandidates = [];
-        for (const cm of cascadeMoves) {
-          if (Number(cm.actividad_id) !== Number(actividadId)) continue;
-          const d = parseLocalDate(cm.fecha);
-          const hf = toMin(cm.hf);
-          if (d && hf != null) planCandidates.push(d.getTime() + hf * 60 * 1000);
-        }
-        for (const ov of overflow) {
-          const d = parseLocalDate(ov.fecha);
-          const hf = toMin(ov.hf);
-          if (d && hf != null) planCandidates.push(d.getTime() + hf * 60 * 1000);
-        }
-        const planFinMs = planCandidates.length > 0 ? Math.max(...planCandidates) : 0;
-        const pf = await this.#pushForwardSiguientes(
-          usuarioId,
-          actividadId,
-          fechaInicio,
-          planFinMs,
-        );
-        cascadeMoves.push(...pf.pushForwardMoves);
-        interBlocked.push(...pf.interBlocked);
-      }
-    }
-
-    return {
-      overflow,
-      cascadeMoves,
-      interBlocked,
-      lostDays,
-      deadlineExceeded: false,
-      remainingMinutes: remaining,
-    };
-  }
-
-  // ------------------------------------------------------------------------
-  // #calcularExtensionActividad: cuánto se extendió la actividad partida
-  // (en minutos) después del cascade. Compara el último bloque ORIGINAL
-  // (antes del cascade) con el último bloque del PLAN (cascadeMoves +
-  // overflow).
-  //
-  // Devuelve minutos >= 0. Si no hay reorganización o la actividad se
-  // acortó, devuelve 0.
-  //
-  // Parámetros:
-  //   splitActividadId: id de la actividad partida (la que se está
-  //                     reorganizando en #computeOverflow).
-  //   bloquesOriginales: copia de allBlocks ANTES de cualquier mutación.
-  //                      Cada item: {actividad_id, fechaStr, fin, ...}.
-  //   cascadeMoves: array de movimientos del cascade mismo-actividad.
-  //                 Cada item: {actividad_id, fecha, hi, hf, ...}.
-  //   overflow: array de bloques NUEVOS a insertar.
-  //             Cada item: {fecha, hi, hf, ...}.
-  // ------------------------------------------------------------------------
-  #calcularExtensionActividad(splitActividadId, bloquesOriginales, cascadeMoves, overflow) {
-    const aid = Number(splitActividadId);
-    if (!aid) return 0;
-
-    const originales = (bloquesOriginales || []).filter(
-      (b) => Number(b.actividad_id) === aid,
-    );
-    if (originales.length === 0) return 0;
-    const sortedOrig = [...originales].sort((a, b) => {
-      if (a.fechaStr !== b.fechaStr) return a.fechaStr < b.fechaStr ? -1 : 1;
-      return (a.fin || 0) - (b.fin || 0);
-    });
-    const lastOrig = sortedOrig[sortedOrig.length - 1];
-    const dOrig = parseLocalDate(lastOrig.fechaStr);
-    if (!dOrig) return 0;
-    const originalFinMs = dOrig.getTime() + (lastOrig.fin || 0) * 60 * 1000;
-
-    const candidates = [];
-    for (const cm of cascadeMoves || []) {
-      if (Number(cm.actividad_id) === aid) {
-        const d = parseLocalDate(cm.fecha);
-        const hf = toMin(cm.hf);
-        if (d && hf != null) candidates.push(d.getTime() + hf * 60 * 1000);
-      }
-    }
-    for (const ov of overflow || []) {
-      const d = parseLocalDate(ov.fecha);
-      const hf = toMin(ov.hf);
-      if (d && hf != null) candidates.push(d.getTime() + hf * 60 * 1000);
-    }
-
-    if (candidates.length === 0) return 0;
-    const planFinMs = Math.max(...candidates);
-    return Math.max(0, Math.floor((planFinMs - originalFinMs) / 60000));
-  }
-
-  // ------------------------------------------------------------------------
-  // #pushForwardSiguientes: cuando la actividad partida se extendió (su
-  // último bloque ahora termina más tarde), reorganiza las actividades
-  // SIGUIENTES en orden cronológico para que no queden superpuestas.
-  //
-  // Estrategia:
-  //   1. Cargar todos los bloques del usuario en el rango.
-  //   2. Calcular la ventana de extensión [splitIniAbs, splitFinAbs]:
-  //      desde donde A1 terminaba originalmente hasta donde termina
-  //      después del cascade.
-  //   3. Agrupar por actividad, filtrar splitActividadId. Excluir ALTA,
-  //      reuniones y completadas.
-  //   4. Ordenar actividades por iniAbs del primer bloque (cronológico).
-  //   5. Para cada actividad B, validar si su primer bloque SOLAPA con
-  //      la ventana de extensión. Si NO solapa (está antes o después
-  //      de la ventana), B no entra en conflicto y no se toca.
-  //   6. Si SOLAPA, mover SOLO el primer bloque de B al primer día
-  //      con slot (mismo día primero). Política de slot:
-  //        - Slot completo (misma duración) tiene prioridad.
-  //        - Si no cabe, compresión al final del bloque de jornada.
-  //        - El slot debe estar DESPUÉS de splitFinAbs (cronología).
-  //        - Si el slot coincide con el bloque original, se ignora.
-  //   7. Si B se movió correctamente, reportar en pushForwardMoves.
-  //      Si no se pudo mover (sin jornada en 30 días), reportar en
-  //      interBlocked con motivo 'fuera_jornada' o 'deadline'.
-  //
-  // NOTA: la propagación DENTRO de B (a sus bloques 2, 3...) NO se
-  // aplica. Esos bloques ya están cronológicamente después del
-  // primero y no entran en conflicto con A1.
-  //
-  // Devuelve:
-  //   { pushForwardMoves: [{horario_id, actividad_id, hi, hf, fecha,
-  //                          len, inter: true, pushForward: true}],
-  //     interBlocked: [{actividad_id, motivo, deadline?, propuesta}] }
-  // ------------------------------------------------------------------------
-  async #pushForwardSiguientes(usuarioId, splitActividadId, ctxFechaStr, planFinMs = null) {
-    const uid = Number(usuarioId);
-    const aid = Number(splitActividadId);
-    if (!uid || !aid) return { pushForwardMoves: [], interBlocked: [] };
-
-    const startDate = parseLocalDate(ctxFechaStr);
-    if (!startDate) return { pushForwardMoves: [], interBlocked: [] };
-
-    // Cargar bloques desde ctxFechaStr hasta 30 días después.
-    const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + 30);
-    const endDateStr = fmtLocalDate(endDate);
-
-    const all = await this.#loadUsuarioBlocksEnRango(
-      uid,
-      ctxFechaStr,
-      endDateStr,
-    );
-
-    // 1. Calcular splitFinAbs: hora_fin absoluta del último bloque de
-    //    splitActividadId POST-cascade. Si recibimos planFinMs (del
-    //    caller), lo usamos porque refleja los cascadeMoves/overflow
-    //    ya decididos en este ciclo. Si no, fallback al último bloque
-    //    en BD (que es el ORIGINAL, no el post-cascade).
-    //
-    //    También calculamos splitIniAbs: hora_fin absoluta del último
-    //    bloque ORIGINAL de A1 (en BD, sin cascade). Esto delimita la
-    //    ventana de extensión y permite detectar conflictos reales
-    //    (B solapa con [splitIniAbs, splitFinAbs]) sin capturar
-    //    actividades anteriores a A1.
-    const splitBlocksAll = all
-      .filter((b) => Number(b.actividad_id) === aid)
-      .sort((a, b) => {
-        if (a.fechaStr !== b.fechaStr) return a.fechaStr < b.fechaStr ? -1 : 1;
-        return (a.fin || 0) - (b.fin || 0);
-      });
-    let splitIniAbs = 0;
-    if (splitBlocksAll.length > 0) {
-      const lastSplitOrig = splitBlocksAll[splitBlocksAll.length - 1];
-      const dOrig = parseLocalDate(lastSplitOrig.fechaStr);
-      splitIniAbs = dOrig
-        ? dOrig.getTime() + (lastSplitOrig.fin || 0) * 60 * 1000
-        : 0;
-    }
-    let splitFinAbs = 0;
-    if (planFinMs && Number(planFinMs) > 0) {
-      splitFinAbs = Number(planFinMs);
-    } else if (splitBlocksAll.length > 0) {
-      const lastSplit = splitBlocksAll[splitBlocksAll.length - 1];
-      const dSplit = parseLocalDate(lastSplit.fechaStr);
-      splitFinAbs = dSplit
-        ? dSplit.getTime() + (lastSplit.fin || 0) * 60 * 1000
-        : 0;
-    }
-    if (splitIniAbs === 0 || splitFinAbs === 0) {
-      return { pushForwardMoves: [], interBlocked: [] };
-    }
-
-    // 2. Agrupar por actividad (excluyendo splitActividadId, ALTA, reuniones).
-    const actividadesMap = new Map();
-    for (const b of all) {
-      const baid = Number(b.actividad_id);
-      if (!baid || baid === aid) continue;
-      if (b.bloqueada || b.esReunion) continue;
-      if ((b.estado_progreso || "pendiente") === "completada") continue;
-      if (!actividadesMap.has(baid)) {
-        actividadesMap.set(baid, {
-          actividad_id: baid,
-          bloqueada: b.bloqueada,
-          deadline: b.deadline || null,
-          bloques: [],
-        });
-      }
-      actividadesMap.get(baid).bloques.push({ ...b });
-    }
-
-    // 3. Ordenar actividades por iniAbs del primer bloque.
-    const actividades = Array.from(actividadesMap.values()).map((a) => {
-      const sorted = [...a.bloques].sort((x, y) => {
-        if (x.fechaStr !== y.fechaStr) return x.fechaStr < y.fechaStr ? -1 : 1;
-        return (x.ini || 0) - (y.ini || 0);
-      });
-      const first = sorted[0];
-      const dFirst = parseLocalDate(first.fechaStr);
-      const iniAbs = dFirst ? dFirst.getTime() + (first.ini || 0) * 60 * 1000 : 0;
-      return { ...a, bloques: sorted, iniAbs };
-    });
-    actividades.sort((x, y) => x.iniAbs - y.iniAbs);
-
-    const pushForwardMoves = [];
-    const interBlocked = [];
-
-    // Helper: convertir fecha+minutos a ms absolutos.
-    const toAbsMs = (fechaStr, min) => {
-      const d = parseLocalDate(fechaStr);
-      return d ? d.getTime() + min * 60 * 1000 : 0;
-    };
-
-    // Helper: emitir move de push-forward para un bloque.
-    const emitMove = (bloque, nuevaFecha, ini, hf, len) => {
-      pushForwardMoves.push({
-        horario_id: bloque.horario_id,
-        actividad_id: bloque.actividad_id,
-        hi: minToHHMM(ini),
-        hf: minToHHMM(hf),
-        fecha: nuevaFecha,
-        len,
-        inter: true,
-        pushForward: true,
-      });
-    };
-
-    // 4. Procesar cada actividad en orden cronológico.
-    // Política: para cada actividad B, validar si su primer bloque
-    // SOLAPA con la ventana de extensión de A1, es decir
-    // [splitIniAbs, splitFinAbs]. Solo los bloques que solapan con
-    // esa ventana están en conflicto. Las actividades que están
-    // completamente ANTES de splitIniAbs (cronológicamente anteriores
-    // a A1) o completamente DESPUÉS de splitFinAbs (cronológicamente
-    // posteriores a A1 sin tocar la extensión) no entran en conflicto.
-    //
-    // Si B entra en conflicto, mover SOLO el primer bloque. Los
-    // demás bloques de B se mantienen donde están.
-    for (const act of actividades) {
-      const bloque = act.bloques[0];
-      if (!bloque) continue;
-      const bloqueIniAbs = toAbsMs(bloque.fechaStr, bloque.ini);
-      const bloqueFinAbs = toAbsMs(bloque.fechaStr, bloque.fin);
-
-      // ¿B solapa con la ventana de extensión de A1?
-      //   - bloqueFinAbs <= splitIniAbs: bloque termina ANTES de donde
-      //     A1 empezaba su extensión. No hay solapamiento.
-      //   - bloqueIniAbs >= splitFinAbs: bloque empieza DESPUÉS de donde
-      //     A1 terminó. No hay solapamiento.
-      // En ambos casos, B no entra en conflicto con A1.
-      if (bloqueFinAbs <= splitIniAbs || bloqueIniAbs >= splitFinAbs) {
-        // No hay solapamiento con la ventana de extensión. B está
-        // cronológicamente antes o después de A1. No se toca.
-        continue;
-      }
-
-      // Sí hay solapamiento. Buscar el primer día (mismo día primero)
-      // que tenga un slot donde colocar el bloque. Política:
-      //   - El slot debe estar DESPUÉS de donde A1 terminó
-      //     (splitFinAbs) para mantener el orden cronológico.
-      //   - Si el bloque que estamos moviendo está en el mismo día
-      //     que A1 termina (dia=0), el slot debe empezar >= finA1.
-      //   - Si está en otro día, basta con que el slot esté en la
-      //     jornada y no choque con otros eventos.
-      //   - Preferimos slot completo (misma duración). Si no cabe,
-      //     aceptamos compresión al final del bloque de jornada.
-      //   - Si el único slot encontrado coincide con el bloque
-      //     original (mismo ini/fin/fecha), se ignora: el bloque
-      //     ya está donde debe, solo necesitamos asegurar que no
-      //     choque. Si choche, seguir buscando.
-      {
-        const iniOrig = bloque.ini;
-        const hfOrig = bloque.fin;
-        const fechaOrigStr = bloque.fechaStr;
-        const len = bloque.len;
-
-        let movido = false;
-        const dBloqueOrig = parseLocalDate(fechaOrigStr);
-
-        // Helper: determina si un slot es el mismo que el bloque
-        // original (mismo ini, fin y fecha). En ese caso es un no-op.
-        const esMismoBloqueOrig = (s) =>
-          s != null &&
-          s.fechaStr === fechaOrigStr &&
-          s.ini === iniOrig &&
-          s.fin === iniOrig + s.len;
-
-        let slotElegido = null; // {ini, len, fechaStr}
-        let slotCompletoElegido = null; // primer slot completo encontrado
-        let slotComprimidoElegido = null; // primer slot comprimido encontrado
-        const DBG = process.env.PUSH_FWD_DEBUG === "1";
-        if (DBG) console.log(`[PF] act=${act.actividad_id} bloqueIni=${iniOrig} bloqueFin=${hfOrig} bloqueFecha=${fechaOrigStr} len=${len} splitFinAbs=${splitFinAbs} splitIniAbs=${splitIniAbs}`);
-
-        for (let dia = 0; dia <= 30; dia++) {
-          const baseDate = parseLocalDate(bloque.fechaStr);
-          if (!baseDate) break;
-          const propDate = new Date(baseDate);
-          propDate.setDate(propDate.getDate() + dia);
-          const propFechaStr = fmtLocalDate(propDate);
-
-          // Para validar deadline usamos el slot completo original
-          // (mismo hi/hf). Si ni siquiera el slot completo cumple
-          // deadline, ningún otro candidato lo hará.
-          const moveFull = {
-            fecha: propFechaStr,
-            hi: minToHHMM(iniOrig),
-            hf: minToHHMM(hfOrig),
-          };
-          if (this.#moveExceedsDeadline({ deadline: act.deadline }, moveFull)) {
-            // Deadline excedido: bloquear y no intentar más días.
-            interBlocked.push({
-              actividad_id: act.actividad_id,
-              motivo: "deadline",
-              deadline: act.deadline || null,
-              propuesta: { hi: minToHHMM(iniOrig), hf: minToHHMM(hfOrig) },
-            });
-            slotElegido = null;
-            break;
-          }
-
-          // Validar jornada destino.
-          let ctxDest;
-          try {
-            ctxDest = await this.loadDayContext(uid, propFechaStr);
-          } catch (_) {
-            ctxDest = null;
-          }
-          if (!ctxDest || ctxDest.bloques.length === 0) continue;
-
-          // Cronología mínima: el slot debe empezar DESPUÉS de donde
-          // A1 terminó (splitFinAbs) para mantener el orden. Para
-          // dias > 0 donde splitFinAbs ya pasó, basta con que esté
-          // en la jornada (minIniAbs = 0).
-          const dProp = parseLocalDate(propFechaStr);
-          const minIniAbs =
-            dProp && splitFinAbs > 0
-              ? Math.floor((splitFinAbs - dProp.getTime()) / 60000)
-              : 0;
-
-          // Ocupantes: TODOS los eventos del día destino, excluyendo
-          // TODOS los bloques de A2 (esta actividad). El bloque que
-          // estamos moviendo es uno de ellos; si excluimos solo ése,
-          // los demás bloques de A2 aparecen como "libres" y el
-          // algoritmo elige un slot que en realidad está ocupado
-          // por A2 mismo (otro bloque).
-          const horariosA2 = new Set(
-            (act.bloques || []).map((b) => Number(b.horario_id)),
-          );
-          const ocupantes = (ctxDest.eventos || []).filter(
-            (e) => !horariosA2.has(Number(e.horario_id)),
-          );
-
-          let slotCompleto = null;
-          let slotComprimido = null;
-          for (const jornadaBloque of ctxDest.bloques) {
-            // Si el bloque de jornada está antes de minIniAbs, skip.
-            if (jornadaBloque.fin <= minIniAbs) continue;
-            const dentro = ocupantes
-              .filter((e) => e.ini >= jornadaBloque.ini && e.fin <= jornadaBloque.fin)
-              .sort((x, y) => x.ini - y.ini);
-            // cursor arranca en max(jornadaBloque.ini, minIniAbs) para
-            // garantizar orden cronológico.
-            let cursor = Math.max(jornadaBloque.ini, minIniAbs);
-            for (const oc of dentro) {
-              if (oc.ini - cursor >= len) {
-                slotCompleto = {
-                  ini: cursor,
-                  len,
-                  fechaStr: propFechaStr,
-                  fin: cursor + len,
-                };
-                break;
-              }
-              cursor = Math.max(cursor, oc.fin);
-            }
-            if (slotCompleto != null) break;
-            if (jornadaBloque.fin - cursor >= len) {
-              slotCompleto = {
-                ini: cursor,
-                len,
-                fechaStr: propFechaStr,
-                fin: cursor + len,
-              };
-              break;
-            }
-            // Compresión al final del último ocupante (o del cursor).
-            const ultimo = dentro.length > 0 ? dentro[dentro.length - 1] : null;
-            const iniBase = Math.max(ultimo ? ultimo.fin : cursor, minIniAbs);
-            const libre = jornadaBloque.fin - iniBase;
-            if (libre >= 30) {
-              const cand = {
-                ini: iniBase,
-                len: libre,
-                fechaStr: propFechaStr,
-                fin: iniBase + libre,
-              };
-              if (slotComprimido == null || cand.len > slotComprimido.len) {
-                slotComprimido = cand;
-              }
-            }
-          }
-
-          if (DBG) {
-            console.log(
-              `[PF]   dia=${dia} fecha=${propFechaStr} completo=${slotCompleto ? `${slotCompleto.ini}-${slotCompleto.fin}` : "null"} comprimido=${slotComprimido ? `${slotComprimido.ini}-${slotComprimido.fin}(${slotComprimido.len}m)` : "null"} mismoBloque=${slotCompleto ? esMismoBloqueOrig(slotCompleto) : "n/a"}`,
-            );
-          }
-
-          // Política de selección (cronológica):
-          //   - Iteramos por día ascendente (dia=0 mismo día, dia=1+ futuro).
-          //   - En cada día, buscamos primero slot COMPLETO (preserva
-          //     duración). Si lo encontramos, lo usamos y paramos.
-          //   - Si NO hay completo pero SÍ comprimido en el mismo día,
-          //     LO USAMOS de inmediato y paramos. Mantiene orden
-          //     secuencial aunque pierda duración.
-          //   - Solo si el día actual no tiene NINGÚN slot válido,
-          //     pasamos al día siguiente.
-          //
-          //   Razón: el usuario quiere que A2 arranque secuencialmente
-          //   desde donde A1 termina (mismo día), aunque eso signifique
-          //   comprimir el bloque. Mover A2 a un día futuro lejano
-          //   rompe el orden cronológico.
-          //
-          //   Validación adicional: el slot NO debe superponerse con
-          //   OTROS bloques de A2 en el día destino. Aunque los
-          //   excluimos de `ocupantes`, igualmente podrían quedar
-          //   huecos que NO son válidos porque ya hay otro bloque
-          //   de A2 en ese rango. Ejemplo: A2 tiene 23/06 15-19, lo
-          //   excluimos del filtro, queda libre 15-19; pero 15-19
-          //   está ocupado por A2 mismo (otro bloque). El slot
-          //   candidato 15-18 SE SUPERPONE con 15-19. Hay que
-          //   verificar manualmente que el slot no toque otros
-          //   bloques de A2.
-          const chocaConOtroA2 = (s) => {
-            if (!s) return false;
-            for (const b of act.bloques || []) {
-              if (Number(b.horario_id) === Number(bloque.horario_id)) continue;
-              if (b.fechaStr !== s.fechaStr) continue;
-              if (s.ini < b.fin && b.ini < s.fin) return true;
-            }
-            return false;
-          };
-
-          // Preferir slot completo en este día.
-          if (
-            slotCompleto != null &&
-            !esMismoBloqueOrig(slotCompleto) &&
-            !chocaConOtroA2(slotCompleto)
-          ) {
-            slotElegido = slotCompleto;
-            break;
-          }
-          // Si no hay completo, usar comprimido EN ESTE DÍA
-          // (mantener orden cronológico).
-          if (
-            slotComprimido != null &&
-            !esMismoBloqueOrig(slotComprimido) &&
-            !chocaConOtroA2(slotComprimido)
-          ) {
-            slotElegido = slotComprimido;
-            break;
-          }
-        }
-
-        // Si tras 30 días no encontramos slot válido, queda null.
-        if (DBG) console.log(`[PF]   ELEGIDO ${slotElegido ? `${slotElegido.fechaStr} ${slotElegido.ini}-${slotElegido.fin}(${slotElegido.len}m)` : "null"}`);
-
-        if (slotElegido != null) {
-          // Aplicar el slot elegido.
-          emitMove(bloque, slotElegido.fechaStr, slotElegido.ini, slotElegido.ini + slotElegido.len, slotElegido.len);
-          bloque.fechaStr = slotElegido.fechaStr;
-          bloque.ini = slotElegido.ini;
-          bloque.fin = slotElegido.ini + slotElegido.len;
-          bloque.len = slotElegido.len;
-          movido = true;
-        }
-
-        if (!movido) {
-          // No se pudo mover en ningún día (incluso comprimido en
-          // mismo día o días futuros). Reportar como fuera_jornada.
-          if (
-            !interBlocked.some(
-              (b) => b.actividad_id === act.actividad_id && b.motivo === "deadline",
-            )
-          ) {
-            interBlocked.push({
-              actividad_id: act.actividad_id,
-              motivo: "fuera_jornada",
-              deadline: act.deadline || null,
-              propuesta: { hi: minToHHMM(iniOrig), hf: minToHHMM(hfOrig) },
-            });
-          }
-        }
-      }
-    }
-
-    return { pushForwardMoves, interBlocked };
-  }
-
-  // Intenta partir actividades que se solapan con un slot candidato.
+  }  // Intenta partir actividades que se solapan con un slot candidato.
   // Estrategia:
   //   1) Hallar el slot candidato (después de mover las movibles si las
   //      hay). Si no hay slot candidato → fits:false.
@@ -1980,10 +810,9 @@ class SchedulerService {
   //     hora específica y queremos partir lo que caiga sobre ese rango
   //     exacto en vez de buscar cualquier hueco libre.
   //   overflowOpts (opcional): { usuarioId, deadline, fechaStr }. Si se
-  //     pasa, los splits cuyo "after" desborda la jornada del día
-  //     generan un campo `overflow: [...]` con bloques en días futuros
-  //     (computados por #computeOverflow). Si no se pasa, los splits
-  //     que desbordan se truncan como antes (perdiendo esos minutos).
+  //     pasa, los splits identifican bloques de otras actividades para
+  //     deshabilitar (disableBlocks). Si no se pasa, los splits se
+  //     procesan sin deshabilitar bloques adicionales.
   async #trySplit(
     ctx,
     minutos,
@@ -1992,6 +821,11 @@ class SchedulerService {
     overflowOpts = null,
   ) {
     const { bloques, eventos, fechaStr: ctxFechaStr } = ctx;
+    // Helper para validar fechas (feriados/cumpleaños). Disponible para
+    // tanto el bloque de splits como el chain cascade que corre al final.
+    const isDateValid = overflowOpts
+      ? (f) => this.#isFutureDateValid(overflowOpts.usuarioId, f)
+      : null;
     // Sólo los eventos movibles (no ALTA, no completados) son candidatos
     // a moverse o partirse. Los ALTA quedan como obstáculos fijos.
     const eventosMovibles = eventos.filter(
@@ -2110,7 +944,7 @@ class SchedulerService {
           });
         } else if (afterLen < 5) {
           // El AFTER queda chico → conservar sólo BEFORE (truncar al final).
-          splits.push({
+          const split = {
             actividad_id: e.actividad_id,
             horario_id: e.horario_id,
             before: {
@@ -2120,7 +954,11 @@ class SchedulerService {
               fecha: ctxFechaStr,
             },
             after: null,
-          });
+          };
+          // Minutos perdidos = afterLen (la cola descartada). Deben
+          // reabsorberse vía cascade, igual que en el Caso 3.
+          if (afterLen > 0) split.cascadeTarget = afterLen;
+          splits.push(split);
         } else if (beforeLen < 5) {
           // El BEFORE queda chico → conservar sólo AFTER (truncar al ppio).
           const afterCandidate = {
@@ -2226,7 +1064,14 @@ class SchedulerService {
             },
             after: null,
           };
-          if (minutosPerdidos > 0) split.overflowPending = minutosPerdidos;
+          // `cascadeTarget` (no `overflowPending`) cuando los minutos
+          // perdidos son por TRUNCAMIENTO de un evento cuyo AFTER cae
+          // DENTRO o EN EL BORDE del slot. La actividad NO perdió
+          // espacio en la jornada — sólo perdió minutos que deben
+          // reabsorberse en bloques posteriores. El cascade intentará
+          // absorberlos primero en el mismo día (bloques con ini >=
+          // slotFin) y luego en días futuros.
+          if (minutosPerdidos > 0) split.cascadeTarget = minutosPerdidos;
           splits.push(split);
         }
         continue;
@@ -2240,7 +1085,7 @@ class SchedulerService {
         if (afterLen < 5) {
           // El AFTER queda chico → conservar sólo BEFORE (mover hora_fin
           // a slotFin).
-          splits.push({
+          const split = {
             actividad_id: e.actividad_id,
             horario_id: e.horario_id,
             before: {
@@ -2250,7 +1095,10 @@ class SchedulerService {
               fecha: ctxFechaStr,
             },
             after: null,
-          });
+          };
+          // Minutos perdidos = afterLen. Se recuperan vía completeActividades.
+          if (afterLen > 0) split.cascadeTarget = afterLen;
+          splits.push(split);
         } else {
           // Conservar AFTER (desplazar el row: hora_inicio = slotFin).
           const afterCandidate = {
@@ -2268,6 +1116,14 @@ class SchedulerService {
             after: afterSameDay,
           };
           if (overflowMin > 0) split.overflowPending = overflowMin;
+          // GAP dejado por la reunión: la actividad pierde minutos.
+          // completeActividades los re-u bicará en huecos libres.
+          const gapMin = Math.max(0, slotFin - e.ini);
+          if (gapMin > 0 && overflowMin === 0) {
+            split.cascadeTarget = gapMin;
+          } else if (gapMin > 0 && overflowMin > 0) {
+            split.overflowPending = overflowMin + gapMin;
+          }
           splits.push(split);
         }
         continue;
@@ -2275,120 +1131,831 @@ class SchedulerService {
     }
 
     // ------------------------------------------------------------------------
-    // Fase 2: resolver los `overflowPending` y `cascadeTarget` con cascade.
-    //
-    // Dos tipos de "tiempo a reubicar":
-    //   - overflowPending: el after del split NO cabe en la jornada del
-    //     día. Cascade intentará absorberlo, pero si no entra, se
-    //     marca el split como FALLIDO (overflowFailedReason).
-    //   - cascadeTarget: el after SÍ cabe en el día, pero la actividad
-    //     PIERDE tiempo porque la reunión ocupa el espacio intermedio.
-    //     Cascade intenta absorberlo en bloques posteriores de la misma
-    //     actividad (mismo día o días futuros). Si no entra, NO es
-    //     fallo — simplemente se pierden minutos (cascadeLostMinutes).
-    //
-    // Cascade en DOS niveles:
-    //   1) Mismo día: buscar bloques posteriores de la MISMA actividad
-    //      (en este día, con hora_inicio >= slotFin) que se puedan correr
-    //      o expandir para absorber los minutos. Si absorbe todo → fin.
-    //      Si absorbe parcialmente → queda un residual para Fase 2.2.
-    //   2) Días futuros: llamar a #computeOverflow con `actividadId` para
-    //      que haga cascade en cada día futuro.
-    //
-    // Cada split termina con:
-    //   - sp.overflow:        bloques NUEVOS a insertar.
-    //   - sp.cascadeMoves:    UPDATEs a bloques existentes.
-    //   - sp.overflowFailedReason + sp.overflowLostMinutes: si no cupo
-    //                        (SOLO si era overflowPending).
-    //   - sp.cascadeLostMinutes: si no cupo el gap (no es error).
+    // Fase 2: recolectar el gap (cascadeTarget) que cada split le quita a
+    // su actividad. Este gap representa los minutos que la actividad pierde
+    // porque la reunión ocupa parte de su bloque. completeActividades debe
+    // priorizar esta actividad para recuperar esos minutos.
+    // ------------------------------------------------------------------------
+    const affectedGaps = new Map();
+    for (const sp of splits) {
+      const gap = sp.cascadeTarget || 0;
+      if (gap > 0) {
+        const aid = Number(sp.actividad_id);
+        affectedGaps.set(aid, (affectedGaps.get(aid) || 0) + gap);
+      }
+    }
+
+    // ------------------------------------------------------------------------
+    // Fase 3: en lugar del cascade (que movía bloques entre actividades
+    // para absorber el gap), identificar bloques de OTRAS actividades en
+    // el mismo día que quedan DESPUÉS del slot de la reunión. Si no son
+    // ALTA, se deshabilitan para que completeActividades las re-ubique
+    // en huecos libres (ver reuniones-asistente.service.js).
     // ------------------------------------------------------------------------
     if (overflowOpts && Array.isArray(splits)) {
-      const isDateValid = (f) =>
-        this.#isFutureDateValid(overflowOpts.usuarioId, f);
-      // Acumulador de blockedMoves del cascade inter-actividad. Se
-      // devuelve en el resultado final para que el front los muestre.
-      const interBlockedAcc = [];
-
+      const disableBlocks = [];
+      const processedActividades = new Set();
       for (const sp of splits) {
-        const isOverflow = sp.overflowPending && sp.overflowPending > 0;
-        const isCascade = sp.cascadeTarget && sp.cascadeTarget > 0;
-        if (!isOverflow && !isCascade) continue;
-        if (!ctxFechaStr || !overflowOpts.usuarioId) {
-          // No tenemos cómo calcular cascade → descartamos esos minutos.
-          continue;
-        }
-
-        const remaining = sp.overflowPending || sp.cascadeTarget || 0;
-        const actividadId = sp.actividad_id;
-
-        // Una sola llamada a #computeOverflow cubre AMBOS casos: el
-        // mismo día (bloques con ini >= slotFin) Y los días futuros.
-        // El parámetro `slotFin` indica que el día del slot también
-        // debe procesarse, filtrando los bloques que ya pasaron.
-        // `cascadeInterActividad: true` activa la reorganización de
-        // bloques de OTRAS actividades del usuario en el rango,
-        // respetando ALTA, deadline y jornada.
-        const ov = await this.#computeOverflow({
-          usuarioId: overflowOpts.usuarioId,
-          fechaInicio: ctxFechaStr,
-          minutosRestantes: remaining,
-          deadline: overflowOpts.deadline || null,
-          actividadId,
-          maxDias: 7,
-          isDateValid,
-          slotFin,
-          cascadeInterActividad: true,
-        });
-
-        if (ov.overflow.length > 0) {
-          sp.overflow = (sp.overflow || []).concat(ov.overflow);
-        }
-        if (ov.cascadeMoves.length > 0) {
-          sp.cascadeMoves = (sp.cascadeMoves || []).concat(ov.cascadeMoves);
-        }
-        if (ov.interBlocked && ov.interBlocked.length > 0) {
-          interBlockedAcc.push(...ov.interBlocked);
-        }
-        if (ov.deadlineExceeded) {
-          if (isOverflow) {
-            sp.overflowFailedReason = "deadline";
-            sp.overflowLostMinutes = ov.remainingMinutes;
-          } else {
-            sp.cascadeLostMinutes = ov.remainingMinutes;
+        for (const ev of eventos) {
+          if (Number(ev.actividad_id) === Number(sp.actividad_id)) continue;
+          if (processedActividades.has(Number(ev.actividad_id))) continue;
+          if (ev.fin <= slotIni || ev.ini < slotFin) continue;
+          if (ev.bloqueada) continue;
+          // Verificar deadline: si el bloque ya está después del deadline,
+          // no tiene sentido moverlo (no encontrará un mejor slot).
+          if (ev.deadline) {
+            const deadlineDate = parseLocalDate(ev.deadline);
+            if (deadlineDate) {
+              const evDate = ev.fecha ? parseLocalDate(ev.fecha) : parseLocalDate(ctxFechaStr);
+              if (evDate && evDate.getTime() > deadlineDate.getTime()) {
+                continue;
+              }
+            }
           }
-        } else if (ov.remainingMinutes > 0) {
-          if (isOverflow) {
-            sp.overflowFailedReason = "no_cupo_en_7_dias";
-            sp.overflowLostMinutes = ov.remainingMinutes;
-          } else {
-            sp.cascadeLostMinutes = ov.remainingMinutes;
-          }
+          disableBlocks.push({
+            horario_id: ev.horario_id,
+            actividad_id: ev.actividad_id,
+          });
+          processedActividades.add(Number(ev.actividad_id));
         }
-
-        // Limpiamos los campos auxiliares.
-        delete sp.overflowPending;
-        delete sp.cascadeTarget;
       }
-
-      // Si acumulamos interBlocked, devolverlo en el resultado para que
-      // placeActivity lo concatene a blockedMoves del plan.
-      if (interBlockedAcc.length > 0) {
+      const gapsArr = Array.from(affectedGaps.entries()).map(
+        ([actividad_id, gap]) => ({ actividad_id, gap }),
+      );
+      if (disableBlocks.length > 0) {
         return {
           fits: true,
           slot: this.#shapeSlot(slotIni, minutos),
           splits,
           moves,
-          interBlocked: interBlockedAcc,
+          disableBlocks,
+          affectedGaps: gapsArr,
         };
       }
     }
 
+    const gapsArr = Array.from(affectedGaps.entries()).map(
+      ([actividad_id, gap]) => ({ actividad_id, gap }),
+    );
     return {
       fits: true,
       slot: this.#shapeSlot(slotIni, minutos),
       splits,
       moves,
+      affectedGaps: gapsArr.length > 0 ? gapsArr : undefined,
     };
+  }
+
+  // (Removed #runChainCascade — the new approach uses disableBlocks
+  // in #trySplit + completeActividades to re-schedule following blocks.)
+
+  // ------------------------------------------------------------------------
+  // #loadUsuarioBlocksEnRango: carga TODOS los horario_usuario de un usuario
+  // en un rango de fechas, con metadata de la actividad (bloqueada,
+  // prioridad, deadline, estado_progreso) y del prospecto.
+  //
+  // Devuelve [{horario_id, actividad_id, usuario_id, fechaStr, ini, fin, len,
+  //   bloqueada, prioridad, estado_progreso, deadline, esReunion}].
+  // ------------------------------------------------------------------------
+  async #loadUsuarioBlocksEnRango(usuarioId, fechaDesde, fechaHasta) {
+    const uid = Number(usuarioId);
+    if (!uid || !fechaDesde || !fechaHasta) return [];
+    try {
+      const rows = await prisma.$queryRawUnsafe(
+        `SELECT
+           hu.id              AS horario_id,
+           hu.actividad_id,
+           hu.usuario_id,
+           TO_CHAR(hu.fecha, 'YYYY-MM-DD')             AS fecha,
+           TO_CHAR(hu.hora_inicio::time, 'HH24:MI:SS') AS hi,
+           TO_CHAR(hu.hora_fin::time,    'HH24:MI:SS') AS hf,
+           hu.duracion_minutos,
+           hu.tipo            AS hu_tipo,
+           a.prioridad,
+           a.bloqueada,
+           a.estado_progreso,
+           a.prospecto_id,
+           TO_CHAR(p.fecha_entrega, 'YYYY-MM-DD')      AS deadline
+         FROM horario_usuario hu
+         LEFT JOIN actividades a ON a.id = hu.actividad_id
+         LEFT JOIN prospectos p  ON p.id = a.prospecto_id
+         WHERE hu.usuario_id = $1
+           AND hu.estado = true
+           AND hu.fecha BETWEEN $2::date AND $3::date
+         ORDER BY hu.fecha ASC, hu.hora_inicio ASC`,
+        uid,
+        fechaDesde,
+        fechaHasta,
+      );
+      return (rows || [])
+        .map((r) => {
+          const ini = toMin(r.hi);
+          const fin = toMin(r.hf);
+          return {
+            horario_id: Number(r.horario_id),
+            actividad_id: r.actividad_id ? Number(r.actividad_id) : null,
+            usuario_id: Number(r.usuario_id),
+            fechaStr: String(r.fecha || "").slice(0, 10),
+            ini,
+            fin,
+            len:
+              r.duracion_minutos != null
+                ? Number(r.duracion_minutos)
+                : ini != null && fin != null
+                ? fin - ini
+                : 0,
+            bloqueada: r.bloqueada === true || r.bloqueada === "true",
+            prioridad: r.prioridad || null,
+            estado_progreso: r.estado_progreso || null,
+            deadline: r.deadline || null,
+            esReunion: r.hu_tipo === "reunion",
+          };
+        })
+        .filter((b) => b.ini != null && b.fin != null);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // ------------------------------------------------------------------------
+  // completeActividades: tras insertar/mover una reunión (o cualquier otra
+  // operación que pueda desbalancear el calendario), recorrer las actividades
+  // activas del usuario y rellenar el gap entre lo PROGRAMADO y su
+  // `tiempo_estimado_minutos`.
+  //
+  // Estrategia por día (en orden cronológico):
+  //   1. Si la actividad tiene un bloque EXISTENTE ese día, EXPANDIR el
+  //      último bloque hacia adelante hasta agotar el espacio libre dentro
+  //      de su bloque de jornada (o hasta el próximo evento del día, lo
+  //      que sea menor). Esto mantiene el calendario visualmente limpio:
+  //      un bloque 08:00-12:00 + 60 min de gap → 08:00-13:00 (no dos
+  //      filas separadas).
+  //   2. Si la actividad NO tiene bloque ese día, crear bloques NUEVOS
+  //      en los huecos libres del día.
+  //   3. Si el bloque ya está al tope de su jornada (no se puede expandir)
+  //      o no hay huecos libres, pasar al siguiente día.
+  //
+  // Reglas:
+  //   - SÓLO agrega/expande, NUNCA mueve bloques existentes.
+  //   - ALTA (bloqueada=true) se omite (no se completa, no se toca).
+  //   - Si la actividad tiene prospecto con fecha_entrega, los bloques
+  //     deben caer en días <= fecha_entrega. Si no entran, se reporta en
+  //     `blocked` con motivo 'deadline'.
+  //   - Si no hay prospecto / fecha_entrega, usa un horizonte de
+  //     `diasHorizonte` (default 14) desde `fechaInicio`. Si no entran,
+  //     se reporta con motivo 'no_cupo_en_horizonte'.
+  //   - Se excluyen:
+  //       * la actividad `ignorarActividadId` (la reunión recién creada).
+  //       * reuniones (tarea tipo REUNION id=2).
+  //       * actividades canceladas (estado=false) o completadas.
+  //
+  // Parámetros:
+  //   usuarioId              int
+  //   fechaInicio            'YYYY-MM-DD' desde donde empezar a buscar huecos
+  //   opts:
+  //     ignorarActividadId   int|null   actividad a excluir del recorrido
+  //     diasHorizonte        int        default 14 (si no hay deadline)
+  //     motivo               string|null  motivo_reprograma a dejar
+  //
+  // Devuelve:
+  //   {
+  //     applied: [{
+  //       actividad_id, minutos_agregados,
+  //       bloques_creados:    [{fecha, hi, hf, len}],   // INSERTs
+  //       bloques_expandidos: [{fecha, hi, hf, len, horario_id}], // UPDATEs
+  //     }],
+  //     blocked: [{ actividad_id, motivo, gap_restante, deadline? }],
+  //     skipped: [{ actividad_id, motivo }],   // ALTA o sin est o ya cubierta
+  //     totalGapInicial: int,
+  //     totalGapCubierto: int,
+  //   }
+  // ------------------------------------------------------------------------
+  async completeActividades(usuarioId, fechaInicio, opts = {}) {
+    const uid = Number(usuarioId);
+    if (!uid || !fechaInicio) {
+      return {
+        applied: [],
+        blocked: [],
+        skipped: [],
+        totalGapInicial: 0,
+        totalGapCubierto: 0,
+      };
+    }
+    const ignorarId = opts.ignorarActividadId
+      ? Number(opts.ignorarActividadId)
+      : null;
+    const diasHorizonte = Number(opts.diasHorizonte) > 0
+      ? Number(opts.diasHorizonte)
+      : 14;
+    const motivoTxt = opts.motivo
+      ? String(opts.motivo).slice(0, 255)
+      : null;
+    const prioritizeActividadId = opts.prioritizeActividadId
+      ? Number(opts.prioritizeActividadId)
+      : null;
+
+    // 1) Cargar TODAS las actividades activas del usuario (no canceladas,
+    //    no completadas). Incluir el prospecto para conocer el deadline.
+    const acts = await prisma.actividades.findMany({
+      where: {
+        usuario_id: uid,
+        estado: true,
+        estado_progreso: { notIn: ["completada", "cancelada"] },
+      },
+      select: {
+        id: true,
+        tiempo_estimado_minutos: true,
+        prioridad: true,
+        bloqueada: true,
+        prospecto_id: true,
+        prospectos: { select: { fecha_entrega: true } },
+        tarea: {
+          select: { tipo_tarea: true },
+        },
+        horario_usuario: {
+          where: { estado: true },
+          select: { duracion_minutos: true },
+        },
+      },
+    });
+
+    // 2) Para cada actividad, calcular gap y filtrar las que necesitan
+    //    completarse. Saltar ALTA, reuniones, sin est, ya cubiertas, o la
+    //    reunión recién creada.
+    const candidatas = [];
+    const skipped = [];
+    let totalGapInicial = 0;
+    for (const a of acts) {
+      const aid = Number(a.id);
+      if (ignorarId && aid === ignorarId) continue;
+      // Reuniones: hu.tipo='reunion' o tarea tipo REUNION (id=2). El join
+      // con tareas_usuarios no aplica acá; basta con chequear el tipo.
+      const tipoTareaId = a.tarea?.tipo_tarea != null
+        ? Number(a.tarea.tipo_tarea)
+        : null;
+      const esReunion = tipoTareaId === 2;
+      if (esReunion) {
+        skipped.push({ actividad_id: aid, motivo: "reunion" });
+        continue;
+      }
+      const est = Number(a.tiempo_estimado_minutos) || 0;
+      if (est <= 0) {
+        skipped.push({ actividad_id: aid, motivo: "sin_est" });
+        continue;
+      }
+      const totalProg = (a.horario_usuario || []).reduce(
+        (acc, h) => acc + (Number(h.duracion_minutos) || 0),
+        0,
+      );
+      let gap = est - totalProg;
+      if (gap <= 0) {
+        if (opts.fillFreeSlots) {
+          gap = 99999;
+        } else {
+          skipped.push({ actividad_id: aid, motivo: "ya_cubierta" });
+          continue;
+        }
+      }
+      const bloqueada =
+        a.bloqueada === true ||
+        a.bloqueada === "true" ||
+        String(a.prioridad || "").toUpperCase() === "ALTA";
+      if (bloqueada) {
+        skipped.push({ actividad_id: aid, motivo: "alta" });
+        continue;
+      }
+      const deadline = a.prospectos?.fecha_entrega
+        ? a.prospectos.fecha_entrega instanceof Date
+          ? // Usar métodos UTC para evitar off-by-one en servidores al
+            // oeste de UTC (Perú = UTC-5). Sin esto, una fecha_entrega
+            // guardada como 2026-06-23T00:00:00Z se "atrasa" un día al
+            // convertirse a local con getDate().
+            `${a.prospectos.fecha_entrega.getUTCFullYear()}-${String(a.prospectos.fecha_entrega.getUTCMonth() + 1).padStart(2, "0")}-${String(a.prospectos.fecha_entrega.getUTCDate()).padStart(2, "0")}`
+          : String(a.prospectos.fecha_entrega).slice(0, 10)
+        : null;
+      candidatas.push({
+        actividad_id: aid,
+        gap,
+        deadline,
+        tipo: a.tarea ? "actividad" : "actividad",
+      });
+      totalGapInicial += gap;
+    }
+
+    // Reordenar: si hay una actividad prioritaria, procesarla primero para
+    // que tenga la primera oportunidad de ocupar los huecos libres.
+    if (prioritizeActividadId && candidatas.length > 1) {
+      const idx = candidatas.findIndex(
+        (c) => c.actividad_id === prioritizeActividadId,
+      );
+      if (idx > 0) {
+        const [prio] = candidatas.splice(idx, 1);
+        candidatas.unshift(prio);
+      }
+    }
+
+    if (candidatas.length === 0) {
+      return {
+        applied: [],
+        blocked: [],
+        skipped,
+        totalGapInicial,
+        totalGapCubierto: 0,
+      };
+    }
+
+    // 3) Para cada candidata, buscar huecos libres día por día y agregar
+    //    bloques hasta llenar el gap (o hasta el deadline/horizonte).
+    const applied = [];
+    const blocked = [];
+    let totalGapCubierto = 0;
+
+    // Calendario base (eventos ya agendados). Lo actualizamos en memoria a
+    // medida que agregamos bloques, así dos actividades no pelean por el
+    // mismo hueco.
+    const startDate = parseLocalDate(fechaInicio);
+    if (!startDate) {
+      return {
+        applied: [],
+        blocked: candidatas.map((c) => ({
+          actividad_id: c.actividad_id,
+          motivo: "fecha_invalida",
+          gap_restante: c.gap,
+        })),
+        skipped,
+        totalGapInicial,
+        totalGapCubierto: 0,
+      };
+    }
+
+    // Para evitar recomputar loadDayContext N veces, pre-construimos el
+    // calendario in-memory: lista de eventos por fecha (YYYY-MM-DD).
+    // Al inicio lo poblamos con TODO lo agendado en el rango. Cuando
+    // agregamos un bloque, lo insertamos también acá.
+    const calendarioMem = new Map(); // fechaStr -> [evento]
+    const addEventToMem = (fechaStr, ev) => {
+      if (!calendarioMem.has(fechaStr)) calendarioMem.set(fechaStr, []);
+      calendarioMem.get(fechaStr).push(ev);
+    };
+
+    // Determinar el rango total a barrer: el máximo entre los horizontes
+    // individuales (startDate + diasHorizonte) y los deadlines de las
+    // candidatas.
+    let endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + diasHorizonte);
+    for (const c of candidatas) {
+      if (c.deadline) {
+        const d = parseLocalDate(c.deadline);
+        if (d && d.getTime() < endDate.getTime()) {
+          // El deadline es anterior al horizonte → respetar deadline.
+          endDate = d;
+        }
+      }
+    }
+    const endDateStr = fmtLocalDate(endDate);
+
+    // Pre-cachear feriados del rango. Comparamos siempre en UTC-midnight
+    // (la columna `feriados.fecha` es DATE, Prisma la sirve como
+    // 00:00:00Z). Convertimos el cursor local a UTC-midnight usando sus
+    // componentes wall-clock para evitar off-by-one por TZ.
+    const feriadosSet = new Set();
+    {
+      const fRows = await prisma.feriados.findMany({
+        where: { estado: true, fecha: { gte: startDate, lte: endDate } },
+        select: { fecha: true },
+      });
+      for (const f of fRows) {
+        const d = f.fecha instanceof Date ? f.fecha : new Date(f.fecha);
+        feriadosSet.add(
+          `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`,
+        );
+      }
+    }
+    const isFeriado = (cursor) => {
+      // Convertir el cursor LOCAL a UTC-midnight con sus componentes
+      // wall-clock. Así la comparación con los feriadosSet (UTC) es
+      // directa, sin importar la TZ del servidor.
+      const utcKey = `${cursor.getFullYear()}-${cursor.getMonth()}-${cursor.getDate()}`;
+      return feriadosSet.has(utcKey);
+    };
+
+    // Precargar eventos existentes en el rango.
+    const allBlocks = await this.#loadUsuarioBlocksEnRango(
+      uid,
+      fechaInicio,
+      endDateStr,
+    );
+    for (const b of allBlocks) {
+      addEventToMem(b.fechaStr, {
+        horario_id: b.horario_id,
+        actividad_id: b.actividad_id,
+        ini: b.ini,
+        fin: b.fin,
+      });
+    }
+
+    // Pre-cachear bloques de jornada por día (loadDayContext es caro).
+    const jornadaByFecha = new Map(); // fechaStr -> bloques [{ini,fin}]
+    const getBloquesJornada = async (fechaStr) => {
+      if (jornadaByFecha.has(fechaStr)) return jornadaByFecha.get(fechaStr);
+      const ctx = await this.loadDayContext(uid, fechaStr);
+      const bl = ctx ? ctx.bloques : [];
+      jornadaByFecha.set(fechaStr, bl);
+      return bl;
+    };
+
+    // Calcular huecos libres en memoria, dada una fecha y los eventos
+    // actuales en calendarioMem.
+    const computeFreeSlotsMem = (fechaStr, bloques) => {
+      if (!bloques || bloques.length === 0) return [];
+      const eventos = calendarioMem.get(fechaStr) || [];
+      const sorted = [...eventos].sort((a, b) => a.ini - b.ini);
+      const out = [];
+      for (const b of bloques) {
+        let cursor = b.ini;
+        for (const e of sorted) {
+          if (e.fin <= cursor || e.ini >= b.fin) continue;
+          if (e.ini > cursor) {
+            out.push({ ini: cursor, fin: Math.min(e.ini, b.fin) });
+          }
+          cursor = Math.max(cursor, e.fin);
+          if (cursor >= b.fin) break;
+        }
+        if (cursor < b.fin) out.push({ ini: cursor, fin: b.fin });
+      }
+      return out.filter((h) => h.fin > h.ini);
+    };
+
+    // Iterar candidatas. Dentro de cada candidata, iterar días. Para cada
+    // día, intentar primero EXPANDIR el último bloque existente de la
+    // actividad (si tiene espacio después hasta el fin de jornada o el
+    // próximo evento). Si no hay bloque del día, crear bloques NUEVOS
+    // en los huecos libres.
+    //
+    // Esto es importante porque expandir mantiene el calendario limpio
+    // visualmente: en vez de una fila 08:00-12:00 + otra 12:00-13:00,
+    // queda una sola fila 08:00-13:00.
+    for (const cand of candidatas) {
+      let remaining = cand.gap;
+      const deadlineDate = cand.deadline
+        ? parseLocalDate(cand.deadline)
+        : null;
+      let cursor = new Date(startDate);
+      const bloquesCreados = [];
+      const bloquesExpandidos = [];
+
+      // No avanzar más allá del deadline.
+      const maxDate = deadlineDate || endDate;
+
+      while (remaining > 0 && cursor.getTime() <= maxDate.getTime()) {
+        const fechaStr = fmtLocalDate(cursor);
+
+        // FIX: saltar feriados. El loop principal barria cualquier día
+        // con bloques de jornada, sin importar si era feriado (San Pedro,
+        // Fiestas Patrias, etc.). Ahora se respeta la tabla `feriados`
+        // con estado=true.
+        if (isFeriado(cursor)) {
+          cursor.setDate(cursor.getDate() + 1);
+          continue;
+        }
+
+        const bloques = await getBloquesJornada(fechaStr);
+        if (bloques.length === 0) {
+          cursor.setDate(cursor.getDate() + 1);
+          continue;
+        }
+
+        const eventos = calendarioMem.get(fechaStr) || [];
+        const bloquesPropios = eventos
+          .filter((e) => Number(e.actividad_id) === cand.actividad_id)
+          .sort((a, b) => a.ini - b.ini);
+        const ultimoPropio =
+          bloquesPropios.length > 0
+            ? bloquesPropios[bloquesPropios.length - 1]
+            : null;
+
+        let consumidoEnEsteDia = 0;
+
+        if (ultimoPropio) {
+          // Hay un bloque propio en el día. Buscar el bloque de jornada
+          // que lo contiene para conocer su `fin` (límite natural).
+          const jornadaDelUltimo = bloques.find(
+            (b) => b.ini <= ultimoPropio.ini && ultimoPropio.fin <= b.fin,
+          );
+          if (!jornadaDelUltimo) {
+            // El bloque propio cae fuera de la jornada (estado raro).
+            // Pasar al siguiente día.
+            cursor.setDate(cursor.getDate() + 1);
+            continue;
+          }
+
+          // Fin de expansión = el menor entre:
+          //   - fin del bloque de jornada, y
+          //   - ini del próximo evento en el día (de cualquier actividad,
+          //     incluida la reunión recién creada).
+          const eventosDespues = eventos
+            .filter((e) => e.ini >= ultimoPropio.fin)
+            .sort((a, b) => a.ini - b.ini);
+          const iniProximo =
+            eventosDespues.length > 0 ? eventosDespues[0].ini : Infinity;
+          const finExpansion = Math.min(jornadaDelUltimo.fin, iniProximo);
+          const espacioLibre = finExpansion - ultimoPropio.fin;
+
+          if (espacioLibre > 0) {
+            const expansion = Math.min(remaining, espacioLibre);
+            const nuevoFin = ultimoPropio.fin + expansion;
+
+            // Actualizar el evento en calendarioMem.
+            ultimoPropio.fin = nuevoFin;
+
+            bloquesExpandidos.push({
+              horario_id: ultimoPropio.horario_id || null,
+              fecha: fechaStr,
+              hi: minToHHMM(ultimoPropio.ini),
+              hf: minToHHMM(nuevoFin),
+              len: expansion,
+            });
+
+            remaining -= expansion;
+            consumidoEnEsteDia = expansion;
+          }
+
+          // Si aún queda gap, intentar colocarlo en OTROS bloques de
+          // jornada del mismo día (e.g. el bloque de tarde si el de
+          // mañana ya está lleno). `computeFreeSlotsMem` ya refleja
+          // el bloque que acabamos de expandir en `calendarioMem`,
+          // por lo que devolverá huecos en otros bloques de jornada.
+          if (remaining > 0) {
+            const huecos = computeFreeSlotsMem(fechaStr, bloques);
+            for (const h of huecos) {
+              if (remaining <= 0) break;
+              const libre = h.fin - h.ini;
+              if (libre <= 0) continue;
+              const len = Math.min(remaining, libre);
+              const ev = {
+                actividad_id: cand.actividad_id,
+                ini: h.ini,
+                fin: h.ini + len,
+              };
+              addEventToMem(fechaStr, ev);
+              bloquesCreados.push({
+                fecha: fechaStr,
+                hi: minToHHMM(h.ini),
+                hf: minToHHMM(h.ini + len),
+                len,
+              });
+              remaining -= len;
+              consumidoEnEsteDia += len;
+            }
+          }
+          // Si no hay espacio, simplemente pasamos al siguiente día (no
+          // creamos bloques nuevos en este día: el bloque ya está al
+          // tope de su jornada o pegado al próximo evento).
+        } else {
+          // No hay bloque del día para esta actividad. Buscar huecos
+          // libres y crear bloques nuevos.
+          const huecos = computeFreeSlotsMem(fechaStr, bloques);
+          for (const h of huecos) {
+            if (remaining <= 0) break;
+            const libre = h.fin - h.ini;
+            if (libre <= 0) continue;
+            const len = Math.min(remaining, libre);
+            const ev = {
+              actividad_id: cand.actividad_id,
+              ini: h.ini,
+              fin: h.ini + len,
+            };
+            addEventToMem(fechaStr, ev);
+            bloquesCreados.push({
+              fecha: fechaStr,
+              hi: minToHHMM(h.ini),
+              hf: minToHHMM(h.ini + len),
+              len,
+            });
+            remaining -= len;
+            consumidoEnEsteDia += len;
+          }
+        }
+
+        // Si no pudimos consumir nada en este día, saltamos. Si consumimos
+        // algo pero quedó gap, probamos el siguiente día (puede haber un
+        // hueco en otro bloque de jornada del mismo día que no probamos).
+        if (consumidoEnEsteDia === 0) {
+          cursor.setDate(cursor.getDate() + 1);
+        } else if (remaining > 0) {
+          // Consumimos pero queda gap. Si el bloque YA ESTÁ al tope
+          // (último bloque propio sin espacio), saltar al siguiente día.
+          // Si era bloque nuevo, también seguir al siguiente día para no
+          // entrar en loop infinito en el mismo día.
+          cursor.setDate(cursor.getDate() + 1);
+        }
+      }
+
+      const totalCubierto = cand.gap - remaining;
+      if (totalCubierto > 0) {
+        applied.push({
+          actividad_id: cand.actividad_id,
+          minutos_agregados: totalCubierto,
+          bloques_creados: bloquesCreados,
+          bloques_expandidos: bloquesExpandidos,
+        });
+        totalGapCubierto += totalCubierto;
+        if (motivoTxt) {
+          await prisma.actividades.update({
+            where: { id: cand.actividad_id },
+            data: { motivo_reprograma: motivoTxt, updated_at: new Date() },
+          }).catch(() => {});
+        }
+      }
+
+      if (remaining > 0) {
+        const motivo = deadlineDate
+          ? "deadline"
+          : "no_cupo_en_horizonte";
+        blocked.push({
+          actividad_id: cand.actividad_id,
+          motivo,
+          deadline: cand.deadline || null,
+          gap_restante: remaining,
+        });
+      }
+    }
+
+    // 4) Persistir los bloques (UPDATE para expansiones, INSERT para
+    //    nuevos). Todo dentro de UNA transacción para que sea atómico.
+    if (applied.length > 0) {
+      await prisma.$transaction(async (tx) => {
+        for (const item of applied) {
+          // Buscar metadatos del slot "modelo" para clonar tipo/categoría
+          // en las inserciones nuevas.
+          const sample = await tx.horario_usuario.findFirst({
+            where: { actividad_id: item.actividad_id, estado: true },
+            select: { tipo: true, categoria: true },
+          });
+
+          // a) Bloques nuevos.
+          for (const b of item.bloques_creados) {
+            await tx.horario_usuario.create({
+              data: {
+                actividad_id: item.actividad_id,
+                usuario_id: uid,
+                fecha: parseLocalDate(b.fecha),
+                hora_inicio: this.#hmsToLocalDate(b.hi),
+                hora_fin: this.#hmsToLocalDate(b.hf),
+                estado: true,
+                tipo: sample?.tipo || "actividad",
+                categoria: sample?.categoria || null,
+                duracion_minutos: b.len,
+                created_at: new Date(),
+                updated_at: new Date(),
+              },
+            });
+          }
+
+          // b) Bloques expandidos: UPDATE de la fila existente.
+          //    Cambiamos hora_fin y duracion_minutos; hora_inicio no se
+          //    toca. Si por alguna razón el horario_id no está disponible
+          //    (no debería pasar), saltamos y logueamos.
+          for (const b of item.bloques_expandidos) {
+            if (!b.horario_id) continue;
+            const hfDate = this.#hmsToLocalDate(b.hf);
+            // La duración nueva = (hf - hi) en minutos = b.len (que ya es
+            // la EXPANSIÓN, no la duración total del bloque). Para la BD
+            // necesitamos la duración TOTAL del bloque, que es:
+            //   (hf_total - hi_total). Pero el plan solo guarda la
+            //   expansión, no el hi original. Por seguridad, lo calculamos
+            //   aquí a partir de los timestamps actuales en BD.
+            const row = await tx.horario_usuario.findUnique({
+              where: { id: Number(b.horario_id) },
+              select: {
+                hora_inicio: true,
+                fecha: true,
+                duracion_minutos: true,
+              },
+            });
+            if (!row) continue;
+            const hiMin =
+              row.hora_inicio instanceof Date
+                ? row.hora_inicio.getUTCHours() * 60 +
+                  row.hora_inicio.getUTCMinutes()
+                : toMin(row.hora_inicio);
+            const hfMin = toMin(b.hf);
+            const duracionTotal = hfMin - hiMin;
+            await tx.$executeRawUnsafe(
+              `UPDATE horario_usuario
+                  SET hora_fin = $1::timetz,
+                      duracion_minutos = $2,
+                      updated_at = now()
+                WHERE id = $3`,
+              hfDate,
+              Number(duracionTotal),
+              Number(b.horario_id),
+            );
+          }
+        }
+      });
+    }
+
+    return {
+      applied,
+      blocked,
+      skipped,
+      totalGapInicial,
+      totalGapCubierto,
+    };
+  }
+
+  // ------------------------------------------------------------------------
+  // disableBlocksAfterPosition: deshabilita (estado=false) todos los bloques
+  // de otras actividades que están ESTRICTAMENTE después de la última
+  // posición (fecha + hora_fin) de la actividad indicada.
+  //
+  // Esto libera espacio en el calendario para que completeActividades
+  // reprograme todo desde esa posición hacia adelante.
+  //
+  // Parámetros:
+  //   usuarioId        int
+  //   actividadId      int  ID de la actividad "ancla" (la afectada)
+  //   desdeFecha       str  'YYYY-MM-DD' desde dónde buscar
+  //
+  // Devuelve: { disabledCount: int }
+  // ------------------------------------------------------------------------
+  async disableBlocksAfterPosition(
+    usuarioId, actividadId, desdeFecha, cutMin,
+  ) {
+    const uid = Number(usuarioId);
+    if (!uid || !desdeFecha) return { disabledCount: 0 };
+
+    try {
+      const desde = parseLocalDate(desdeFecha);
+      if (!desde) return { disabledCount: 0 };
+      const hasta = new Date(desde);
+      hasta.setDate(hasta.getDate() + 30);
+      const hastaStr = fmtLocalDate(hasta);
+
+      const allBlocks = await this.#loadUsuarioBlocksEnRango(
+        uid, desdeFecha, hastaStr,
+      );
+      if (allBlocks.length === 0) return { disabledCount: 0 };
+
+      let corteFechaStr = desdeFecha;
+      let corteMinutos = 0;
+
+      const aid = Number(actividadId);
+      if (aid && cutMin == null) {
+        // Modo original: usar el último bloque de la actividad ancla.
+        const propios = allBlocks
+          .filter((b) => Number(b.actividad_id) === aid)
+          .sort((a, b) => {
+            if (a.fechaStr !== b.fechaStr)
+              return a.fechaStr.localeCompare(b.fechaStr);
+            return a.fin - b.fin;
+          });
+        if (propios.length === 0) return { disabledCount: 0 };
+        const ultimoPropio = propios[propios.length - 1];
+        corteFechaStr = ultimoPropio.fechaStr;
+        corteMinutos = ultimoPropio.fin;
+      } else if (cutMin != null) {
+        // Modo directo: usar la posición explícita.
+        corteMinutos = Number(cutMin);
+      } else {
+        return { disabledCount: 0 };
+      }
+
+      // Bloques de otras actividades después de la posición de corte.
+      const toDisable = allBlocks.filter((b) => {
+        if (aid && Number(b.actividad_id) === aid) return false;
+        if (b.bloqueada || b.esReunion) return false;
+        if (b.fechaStr > corteFechaStr) return true;
+        if (
+          b.fechaStr === corteFechaStr &&
+          b.ini >= corteMinutos
+        )
+          return true;
+        return false;
+      });
+
+      if (toDisable.length === 0) return { disabledCount: 0 };
+
+      const ids = toDisable
+        .map((b) => Number(b.horario_id))
+        .filter((id) => id > 0);
+      if (ids.length === 0) return { disabledCount: 0 };
+
+      await prisma.$transaction(async (tx) => {
+        for (const id of ids) {
+          await tx.horario_usuario.update({
+            where: { id },
+            data: { estado: false, updated_at: new Date() },
+          });
+        }
+      });
+
+      return { disabledCount: ids.length };
+    } catch (e) {
+      console.error("[disableBlocksAfterPosition] error:", e?.message || e);
+      return { disabledCount: 0 };
+    }
   }
 
   // ---- Apply moves (lo que sí toca la BD) ---------------------------
@@ -2402,6 +1969,8 @@ class SchedulerService {
     return await prisma.$transaction(async (tx) => {
       let applied = 0;
       for (const m of moves) {
+        const nuevaDur = Math.max(1, toMin(m.hf) - toMin(m.hi));
+        if (nuevaDur <= 0) continue; // skip invalid moves (hf <= hi)
         // 1) Actualizamos horario_usuario (hi/hf/fecha).
         //    Como no tiene PK declarable en Prisma, usamos raw SQL.
         // 2) Si la movida fue por reprogramación, dejamos constancia en
@@ -2413,18 +1982,47 @@ class SchedulerService {
               SET hora_inicio = $1::timetz,
                   hora_fin    = $2::timetz,
                   fecha       = $3::date,
+                  duracion_minutos = $5,
                   updated_at  = now()
             WHERE id = $4`,
           hiDate,
           hfDate,
           m.fecha,
           Number(m.horario_id),
+          nuevaDur,
         );
         if (m.actividad_id && motivo) {
           await tx.actividades.update({
             where: { id: Number(m.actividad_id) },
             data: { motivo_reprograma: motivo, updated_at: new Date() },
           });
+        }
+        
+        // Insertar bloques de overflow generados por fragmentación (e.g. tryPlace)
+        if (Array.isArray(m.overflow) && m.overflow.length > 0) {
+          const sample = await tx.horario_usuario.findUnique({
+            where: { id: Number(m.horario_id) },
+            select: { usuario_id: true, tipo: true, categoria: true },
+          });
+          if (sample) {
+            for (const o of m.overflow) {
+              await tx.horario_usuario.create({
+                data: {
+                  actividad_id: Number(m.actividad_id),
+                  usuario_id: sample.usuario_id,
+                  fecha: parseLocalDate(o.fecha || m.fecha),
+                  hora_inicio: this.#hmsToLocalDate(o.hi),
+                  hora_fin: this.#hmsToLocalDate(o.hf),
+                  estado: true,
+                  tipo: sample.tipo || "actividad",
+                  categoria: sample.categoria || null,
+                  duracion_minutos: o.len || (toMin(o.hf) - toMin(o.hi)),
+                  created_at: new Date(),
+                  updated_at: new Date(),
+                },
+              });
+            }
+          }
         }
         applied++;
       }
@@ -2629,6 +2227,13 @@ class SchedulerService {
         // horas pero deja el bloque en su fecha original → superposición.
         if (Array.isArray(sp.cascadeMoves) && sp.cascadeMoves.length > 0) {
           for (const cm of sp.cascadeMoves) {
+            if (cm.delete) {
+              await tx.$executeRawUnsafe(
+                `UPDATE horario_usuario SET estado = false, updated_at = now() WHERE id = $1`,
+                Number(cm.horario_id),
+              ).catch(() => {});
+              continue;
+            }
             const cmHi = this.#hmsToLocalDate(cm.hi);
             const cmHf = this.#hmsToLocalDate(cm.hf);
             if (cm.fecha) {
@@ -2676,6 +2281,29 @@ class SchedulerService {
       };
     });
   }
+
+  // Aplica una lista de CHAIN CASCADES propuesta por placeActivity.
+  // Cada chainCascade tiene la forma:
+  //   {
+  //     actividad_id,
+  //     cascadeMoves: [{ horario_id, actividad_id, hi, hf, fecha, len,
+  //                        inter? }],
+  //     overflow:     [{ fecha, hi, hf, len }, ...],
+  //   }
+  //
+  // Semántica:
+  //   - cascadeMoves: UPDATE de bloques existentes (puede ser de la misma
+  //     actividad que se expande, o de OTRA actividad que se "empuja" para
+  //     hacerle espacio — flag `inter: true`).
+  //   - overflow: INSERT de filas NUEVAS en horario_usuario para la
+  //     actividad que se está completando.
+  //
+  // Esto llena los gaps residuales que deja el split cascade moviendo
+  // actividades adyacentes (no contemplado por completeActividades porque
+  // esa función sólo expande o crea bloques sin tocar lo existente).
+  //
+  // Devuelve { applied: { cascadeMoves, overflow } }.
+  // (Removed applyChainCascades — no longer needed with the new disableBlocks approach.)
 
   // ---- Helpers privados ----------------------------------------------
 
@@ -2880,6 +2508,73 @@ class SchedulerService {
       },
       moves,
     };
+  }
+
+  // Limpia el horario para un usuario y fecha combinando bloques adyacentes de la
+  // misma actividad que hayan sido fragmentados por reprogramaciones.
+  async mergeAdjacentBlocks(uid, fechaDate) {
+    if (!uid || !fechaDate) return;
+    try {
+      const startOfDay = new Date(fechaDate);
+      startOfDay.setUTCHours(0, 0, 0, 0);
+      const endOfDay = new Date(fechaDate);
+      endOfDay.setUTCHours(23, 59, 59, 999);
+
+      const bloques = await prisma.horario_usuario.findMany({
+        where: {
+          usuario_id: uid,
+          fecha: { gte: startOfDay, lte: endOfDay },
+          estado: true,
+        },
+        orderBy: { hora_inicio: 'asc' },
+      });
+
+      let currentMerged = null;
+      for (const bloque of bloques) {
+        if (!currentMerged) {
+          currentMerged = bloque;
+          continue;
+        }
+
+        // Si son de la misma actividad y están pegados (fin del actual == inicio del siguiente)
+        if (currentMerged.actividad_id === bloque.actividad_id) {
+          const finActual =
+            currentMerged.hora_fin instanceof Date
+              ? currentMerged.hora_fin.getUTCHours() * 60 + currentMerged.hora_fin.getUTCMinutes()
+              : 0;
+          const iniSiguiente =
+            bloque.hora_inicio instanceof Date
+              ? bloque.hora_inicio.getUTCHours() * 60 + bloque.hora_inicio.getUTCMinutes()
+              : 0;
+
+          if (finActual === iniSiguiente) {
+            // Se solapan exactamente: extender currentMerged y borrar el siguiente
+            const newDur = Number(currentMerged.duracion_minutos) + Number(bloque.duracion_minutos);
+            
+            await prisma.$transaction([
+              prisma.$executeRawUnsafe(
+                `UPDATE horario_usuario SET hora_fin = $1::timetz, duracion_minutos = $2, updated_at = now() WHERE id = $3`,
+                bloque.hora_fin,
+                newDur,
+                currentMerged.id
+              ),
+              prisma.$executeRawUnsafe(
+                `DELETE FROM horario_usuario WHERE id = $1`,
+                bloque.id
+              )
+            ]);
+            
+            // Actualizar currentMerged en memoria para seguir encadenando
+            currentMerged.hora_fin = bloque.hora_fin;
+            currentMerged.duracion_minutos = newDur;
+            continue;
+          }
+        }
+        currentMerged = bloque;
+      }
+    } catch (e) {
+      console.error("Error en mergeAdjacentBlocks:", e);
+    }
   }
 
   // Convierte "HH:MM" o "HH:MM:SS" a un Date 1970-01-01T... UTC que

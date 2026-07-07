@@ -224,18 +224,18 @@ $(function () {
       <form id="form-potencial" novalidate>
         <ul class="nav nav-tabs nav-bordered mb-3" role="tablist">
           <li class="nav-item">
-            <a href="#tab-trabajo" data-bs-toggle="tab" class="nav-link active" aria-selected="true">
-              <i class="ti ti-briefcase me-1"></i> Trabajo
-            </a>
-          </li>
-          <li class="nav-item">
-            <a href="#tab-tarea" data-bs-toggle="tab" class="nav-link" aria-selected="false">
+            <a href="#tab-tarea" data-bs-toggle="tab" class="nav-link active" aria-selected="true">
               <i class="ti ti-checkbox me-1"></i> Tarea
             </a>
           </li>
           <li class="nav-item">
             <a href="#tab-contactos" data-bs-toggle="tab" class="nav-link" aria-selected="false">
               <i class="ti ti-users me-1"></i> Contactos
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="#tab-trabajo" data-bs-toggle="tab" class="nav-link" aria-selected="false">
+              <i class="ti ti-briefcase me-1"></i> Trabajo
             </a>
           </li>
           ${
@@ -250,68 +250,8 @@ $(function () {
         </ul>
 
         <div class="tab-content">
-          <!-- ====== TAB 1: Trabajo ====== -->
-          <div class="tab-pane fade show active" id="tab-trabajo">
-            <div class="row g-3">
-              <div class="col-md-8">
-                <label class="form-label">Título del trabajo</label>
-                <input type="text" class="form-control" name="titulo_prospecto" maxlength="255" placeholder="Ej. Tesis de Ingeniería" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">Prioridad <span class="text-danger">*</span></label>
-                <select class="form-select" name="prioridad" required>
-                  <option value="">—</option>
-                  <option value="ALTA">Alta</option>
-                  <option value="MEDIA">Media</option>
-                  <option value="BAJA">Baja</option>
-                </select>
-              </div>
-
-              <div class="col-md-6">
-                <label class="form-label">Universidad</label>
-                <select class="form-select" name="institucion_id" id="sel-institucion">
-                  ${institucionesOpts}
-                </select>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Carrera</label>
-                <select class="form-select" name="carrera_id" id="sel-carrera" disabled>
-                  <option value="">Seleccione una universidad primero</option>
-                </select>
-              </div>
-
-              <div class="col-md-6">
-                <label class="form-label">Nivel académico</label>
-                <select class="form-select" name="nivel_academico_id">
-                  ${nivelesOpts}
-                </select>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Fecha tentativa de entrega</label>
-                <input type="date" class="form-control" name="fecha_entrega" />
-              </div>
-
-              <div class="col-md-6">
-                <label class="form-label">Origen del contacto <span class="text-danger">*</span></label>
-                <select class="form-select" name="origen_id" required>
-                  ${origenesOpts}
-                </select>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Link Drive</label>
-                <input type="url" class="form-control" name="link_drive" maxlength="150" placeholder="https://drive.google.com/..." />
-                <small class="text-muted">Se guarda el actual y el historial.</small>
-              </div>
-
-              <div class="col-12">
-                <label class="form-label">Observaciones y detalles</label>
-                <textarea class="form-control" name="contenido" rows="3" placeholder="Notas, detalles, contexto..."></textarea>
-              </div>
-            </div>
-          </div>
-
-          <!-- ====== TAB 2: Tarea ====== -->
-          <div class="tab-pane fade" id="tab-tarea">
+          <!-- ====== TAB 1: Tarea ====== -->
+          <div class="tab-pane fade show active" id="tab-tarea">
             ${
               editingId
                 ? `<div class="d-flex align-items-center justify-content-between mb-2">
@@ -417,7 +357,7 @@ $(function () {
             }
           </div>
 
-          <!-- ====== TAB 3: Contactos ====== -->
+          <!-- ====== TAB 2: Contactos ====== -->
           <div class="tab-pane fade" id="tab-contactos">
             <div class="d-flex align-items-center justify-content-between mb-2">
               <h6 class="text-uppercase text-muted fs-xxs mb-0">Contactos del cliente</h6>
@@ -431,6 +371,66 @@ $(function () {
 
             <div class="text-center text-muted py-3" id="contactos-empty">
               Aún no hay contactos. Haz clic en "Agregar contacto".
+            </div>
+          </div>
+
+          <!-- ====== TAB 3: Trabajo ====== -->
+          <div class="tab-pane fade" id="tab-trabajo">
+            <div class="row g-3">
+              <div class="col-md-8">
+                <label class="form-label">Título del trabajo</label>
+                <input type="text" class="form-control" name="titulo_prospecto" maxlength="255" placeholder="Ej. Tesis de Ingeniería" />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Prioridad <span class="text-danger">*</span></label>
+                <select class="form-select" name="prioridad" required>
+                  <option value="">—</option>
+                  <option value="ALTA">Alta</option>
+                  <option value="MEDIA">Media</option>
+                  <option value="BAJA">Baja</option>
+                </select>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">Universidad</label>
+                <select class="form-select" name="institucion_id" id="sel-institucion">
+                  ${institucionesOpts}
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Carrera</label>
+                <select class="form-select" name="carrera_id" id="sel-carrera" disabled>
+                  <option value="">Seleccione una universidad primero</option>
+                </select>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">Nivel académico</label>
+                <select class="form-select" name="nivel_academico_id">
+                  ${nivelesOpts}
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Fecha tentativa de entrega</label>
+                <input type="date" class="form-control" name="fecha_entrega" />
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">Origen del contacto <span class="text-danger">*</span></label>
+                <select class="form-select" name="origen_id" required>
+                  ${origenesOpts}
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Link Drive</label>
+                <input type="url" class="form-control" name="link_drive" maxlength="150" placeholder="https://drive.google.com/..." />
+                <small class="text-muted">Se guarda el actual y el historial.</small>
+              </div>
+
+              <div class="col-12">
+                <label class="form-label">Observaciones y detalles</label>
+                <textarea class="form-control" name="contenido" rows="3" placeholder="Notas, detalles, contexto..."></textarea>
+              </div>
             </div>
           </div>
 
@@ -2286,12 +2286,6 @@ $(function () {
   });
   $modalBody.on("change", "#sel-institucion", function () {
     loadCarreras($(this).val());
-  });
-  // Al cambiar la fecha de asignación, re-carga usuarios y preselecciona
-  // el auxiliar del día (si existe).
-  $modalBody.on("change", "#sel-fecha-asignacion", function () {
-    const fecha = $(this).val();
-    loadUsuariosAsignables(fecha, { keepSelected: true });
   });
   // Regla de REUNIÓN: si la tarea seleccionada es de tipo REUNIONES
   // (o tiene el id de tipo_tarea=2, que es la fila "REUNION/REUNIONES"

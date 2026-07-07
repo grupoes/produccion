@@ -153,10 +153,10 @@
         horaEl.value = d.hora_fin;
         console.log("[asistente-cal] apply defaults: aplicado", { fecha: d.fecha, hora: d.hora_fin });
       } else {
-        // Sin historial → fecha = hoy, hora = vacía para que elija.
-        fechaEl.value = todayLocalYYYYMMDD();
+        // Sin historial → respetamos la fecha que el usuario haya puesto,
+        // sólo dejamos la hora vacía para que elija.
         horaEl.value = "";
-        console.log("[asistente-cal] apply defaults: sin historial, hoy + hora vacía");
+        console.log("[asistente-cal] apply defaults: sin historial, respetamos fecha + hora vacía");
       }
     } catch (err) {
       console.error("[asistente-cal] horario-ultimo error:", err);
@@ -600,6 +600,7 @@
     const warn = document.getElementById("js-cal-event-warning");
     if (warn) warn.classList.add("d-none");
     document.getElementById("js-cal-btn-reprogramar")?.classList.add("d-none");
+    document.getElementById("js-cal-btn-ajustar-duracion")?.classList.add("d-none");
     document.getElementById("js-cal-btn-reasignar")?.classList.add("d-none");
     document.getElementById("js-cal-btn-eliminar")?.classList.add("d-none");
 
@@ -685,20 +686,30 @@
       setCalWrap("contactos", false);
     }
 
-    // Habilitar botones según estado de la reunión.
+    // Habilitar botones según estado de la actividad.
     const enProgreso = String(data.estado_progreso || "").toLowerCase() === "en_progreso";
     const cancelada = !data.estado;
+    const esReunion =
+      Number(data.tarea?.tipo_tarea?.id) === 2 ||
+      data.hu_tipo === "reunion";
+    const etiqueta = esReunion ? "reunión" : "actividad";
     if (warn && cancelada) {
       warn.classList.remove("d-none");
-      setCalField("warning", "Esta reunión está cancelada.");
+      setCalField("warning", `Esta ${etiqueta} está cancelada.`);
     }
     if (!enProgreso) {
       const btnRepro = document.getElementById("js-cal-btn-reprogramar");
+      const btnAjd = document.getElementById("js-cal-btn-ajustar-duracion");
       const btnReasig = document.getElementById("js-cal-btn-reasignar");
       const btnElim = document.getElementById("js-cal-btn-eliminar");
       if (btnRepro) {
         btnRepro.classList.remove("d-none");
         btnRepro.dataset.actividadId = String(data.id);
+      }
+      if (btnAjd && esReunion) {
+        btnAjd.classList.remove("d-none");
+        btnAjd.dataset.actividadId = String(data.id);
+        btnAjd.dataset.duracionActual = String(data.tiempo_estimado_minutos || data.slot?.duracion_minutos || 60);
       }
       if (btnReasig) {
         btnReasig.classList.remove("d-none");
@@ -707,6 +718,8 @@
       if (btnElim) {
         btnElim.classList.remove("d-none");
         btnElim.dataset.actividadId = String(data.id);
+        btnElim.dataset.esReunion = esReunion ? "1" : "0";
+        btnElim.innerHTML = `<i class="ti ti-trash me-1"></i>Cancelar ${etiqueta}`;
       }
     }
 
@@ -778,6 +791,60 @@
         );
       } else {
         showToast("error", err.message || "Error al reprogramar.");
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // -------- modal ajustar duración ----------------------------------
+  function openAjustarDuracionModal(actividadId, duracionActual) {
+    const modal = getModal("js-cal-ajustar-duracion-modal");
+    if (!modal) return;
+    document.getElementById("js-cal-ajd-actual").value = `${duracionActual} min`;
+    document.getElementById("js-cal-ajd-nueva").value = duracionActual;
+    document.getElementById("js-cal-ajd-result").innerHTML = "";
+    const btn = document.getElementById("js-cal-ajd-aplicar");
+    if (btn) {
+      btn.disabled = false;
+      btn.dataset.actividadId = String(actividadId);
+    }
+    modal.show();
+  }
+
+  async function submitAjustarDuracion() {
+    const btn = document.getElementById("js-cal-ajd-aplicar");
+    const id = Number(btn?.dataset.actividadId || 0);
+    if (!id) return;
+    const nuevaDuracion = Number(document.getElementById("js-cal-ajd-nueva").value);
+    if (!nuevaDuracion || nuevaDuracion < 5) {
+      showToast("warning", "La duración debe ser al menos 5 minutos.");
+      return;
+    }
+    btn.disabled = true;
+    try {
+      const adjResp = await fetchJSON(`/api/calendario-asistente/reuniones/${id}/ajustar-duracion`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duracion_minutos: nuevaDuracion }),
+      });
+      if (adjResp?.data?.warnings?.length > 0) {
+        for (const w of adjResp.data.warnings) {
+          showToast("warning", `No se puede programar completamente: faltan ${w.faltan} minutos. Cambia de auxiliar.`);
+        }
+      }
+      showToast("success", "Duración ajustada.");
+      const modal = getModal("js-cal-ajustar-duracion-modal");
+      if (modal) modal.hide();
+      await refreshAll();
+    } catch (err) {
+      if (err.status === 409 && err.payload) {
+        const resultEl = document.getElementById("js-cal-ajd-result");
+        if (resultEl) {
+          resultEl.innerHTML = `<div class="alert alert-danger mb-0 py-2 fs-sm"><i class="ti ti-alert-triangle me-1"></i>${escapeHtml(err.payload.error || err.message)}</div>`;
+        }
+      } else {
+        showToast("error", err.message || "Error al ajustar duración.");
       }
     } finally {
       btn.disabled = false;
@@ -1564,8 +1631,11 @@
 
   // -------- eliminar ------------------------------------------------
   async function submitEliminar(actividadId) {
+    const btn = document.getElementById("js-cal-btn-eliminar");
+    const esReunion = btn?.dataset?.esReunion === "1";
+    const etiqueta = esReunion ? "reunión" : "actividad";
     const ok = await confirmDialog(
-      "¿Cancelar esta reunión?",
+      `¿Cancelar esta ${etiqueta}?`,
       "Quedará registrada como inactiva (no se borra de la base de datos).",
       "Sí, cancelar",
     );
@@ -1574,7 +1644,7 @@
       await fetchJSON(`/api/calendario-asistente/reuniones/${actividadId}`, {
         method: "DELETE",
       });
-      showToast("success", "Reunión cancelada.");
+      showToast("success", `${etiqueta.charAt(0).toUpperCase() + etiqueta.slice(1)} cancelada.`);
       const modal = getModal("js-cal-event-modal");
       if (modal) modal.hide();
       await refreshAll();
@@ -1811,6 +1881,16 @@
         openReprogramarModal(id);
       });
     document
+      .getElementById("js-cal-btn-ajustar-duracion")
+      ?.addEventListener("click", function () {
+        const id = Number(this.dataset.actividadId || 0);
+        const duracion = Number(this.dataset.duracionActual || 60);
+        if (!id) return;
+        const modal = getModal("js-cal-event-modal");
+        if (modal) modal.hide();
+        openAjustarDuracionModal(id, duracion);
+      });
+    document
       .getElementById("js-cal-btn-reasignar")
       ?.addEventListener("click", function () {
         const id = Number(this.dataset.actividadId || 0);
@@ -1830,6 +1910,10 @@
     document
       .getElementById("js-cal-rep-aplicar")
       ?.addEventListener("click", submitReprogramar);
+    // Ajustar duracion.
+    document
+      .getElementById("js-cal-ajd-aplicar")
+      ?.addEventListener("click", submitAjustarDuracion);
     // Si el modal de reprogramar se cierra sin aplicar (Cancelar, ESC,
     // click afuera), refrescamos el calendario para revertir cualquier
     // cambio visual de un drag&drop previo.
@@ -1877,17 +1961,6 @@
     document
       .getElementById("js-cal-prog-aplicar")
       ?.addEventListener("click", submitProgramar);
-    // Al cambiar el usuario en el modal legacy "Programar reunión",
-    // también refrescar fecha+hora desde su historial.
-    document
-      .getElementById("js-cal-prog-usuario")
-      ?.addEventListener("change", function () {
-        applyFechaHoraDefaultsFromUsuario(
-          this.value ? Number(this.value) : null,
-          "js-cal-prog-fecha",
-          "js-cal-prog-hora",
-        );
-      });
     // CLIENTES tab: select change + refresh.
     document
       .getElementById("js-cal-clientes-select")

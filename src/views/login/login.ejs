@@ -1,170 +1,94 @@
-<!--
-* Author: Coderthemes
-* Product Name: Vona
-* Version: 1.0.0
-* Contact: support@coderthemes.com
--->
 <!DOCTYPE html>
-<html lang="en">
-  <!-- Mirrored from coderthemes.com/vona/layouts/auth-sign-in.html by HTTrack Website Copier/3.x [XR&CO'2014], Wed, 27 May 2026 15:45:07 GMT -->
+<html lang="es">
   <head>
     <meta charset="utf-8" />
-    <title>Login | Grupo Es</title>
+    <title>Login | Grupo ES</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Grupo Es" />
-    <meta name="keywords" content="Grupo Es" />
-    <meta name="author" content="Coderthemes" />
-
-    <!-- App favicon -->
+    <meta name="description" content="Grupo ES" />
     <link rel="shortcut icon" href="/assets/images/favicon.ico" />
-
-    <!-- Theme Config Js -->
-    <script src="/assets/js/config.js"></script>
-
-    <!-- Vendor css -->
-    <link href="/assets/css/vendors.min.css" rel="stylesheet" type="text/css" />
-
-    <!-- App css -->
-    <link href="/assets/css/app.min.css" rel="stylesheet" type="text/css" />
-
-    <script src="/assets/plugins/lucide/lucide.min.js"></script>
+    <link href="/assets/css/login.css" rel="stylesheet" type="text/css" />
   </head>
 
   <body>
-    <div class="auth-box overflow-hidden align-items-center d-flex">
-      <div class="container">
-        <div class="row justify-content-center">
-          <div class="col-xxl-4 col-md-6 col-sm-8">
-            <div class="card">
-              <div class="card-body">
-                <div class="auth-brand mb-4">
-                  <a href="index.html" class="logo-dark">
-                    <span class="d-flex align-items-center gap-1">
-                      <span
-                        class="avatar avatar-xs rounded-circle text-bg-dark"
-                      >
-                        <span class="avatar-title">
-                          <i data-lucide="sparkles" class="fs-md"></i>
-                        </span>
-                      </span>
-                      <span class="logo-text text-body fw-bold fs-xl"
-                        >Grupo ES</span
-                      >
-                    </span>
-                  </a>
-                  <a href="index.html" class="logo-light">
-                    <span class="d-flex align-items-center gap-1">
-                      <span
-                        class="avatar avatar-xs rounded-circle text-bg-dark"
-                      >
-                        <span class="avatar-title">
-                          <i data-lucide="sparkles" class="fs-md"></i>
-                        </span>
-                      </span>
-                      <span class="logo-text text-white fw-bold fs-xl"
-                        >Vona</span
-                      >
-                    </span>
-                  </a>
-                  <p class="text-muted w-lg-75 mt-3">
-                    Vamos a iniciar sesión. Ingrese su correo electrónico y
-                    contraseña para continuar.
-                  </p>
-                </div>
-
-                <div class="">
-                  <form id="loginForm" action="/api/auth/login" method="post">
-                    <div class="mb-3">
-                      <label for="userEmail" class="form-label"
-                        >Correo Electrónico
-                        <span class="text-danger">*</span></label
-                      >
-                      <div class="input-group">
-                        <input
-                          type="email"
-                          class="form-control"
-                          id="userEmail"
-                          name="usuario"
-                          placeholder="micorreo@example.com"
-                          required
-                        />
-                      </div>
-                    </div>
-
-                    <div class="mb-3">
-                      <label for="userPassword" class="form-label"
-                        >Contraseña <span class="text-danger">*</span></label
-                      >
-                      <div class="input-group">
-                        <input
-                          type="password"
-                          class="form-control"
-                          id="userPassword"
-                          name="clave"
-                          placeholder="••••••••"
-                          required
-                        />
-                      </div>
-                    </div>
-
-                    <div
-                      id="loginError"
-                      class="text-danger mb-3"
-                      style="display: none"
-                    ></div>
-
-                    <div
-                      class="d-flex justify-content-between align-items-center mb-3"
-                    >
-                      <div class="form-check">
-                        <input
-                          class="form-check-input form-check-input-light fs-14"
-                          type="checkbox"
-                          id="rememberMe"
-                        />
-                        <label class="form-check-label" for="rememberMe"
-                          >Mantenme registrado</label
-                        >
-                      </div>
-                      <a
-                        href="auth-reset-pass.html"
-                        class="text-decoration-underline link-offset-3 text-muted"
-                        >¿Has olvidado tu contraseña?</a
-                      >
-                    </div>
-
-                    <div class="d-grid">
-                      <button
-                        type="submit"
-                        class="btn btn-primary fw-semibold py-2"
-                      >
-                        Iniciar Sesión
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              </div>
-            </div>
-            <p class="text-center text-muted mt-4 mb-0">
-              ©
-              <script>
-                document.write(new Date().getFullYear());
-              </script>
-              Grupo ES — by <span class="fw-semibold">Sistema Mia</span>
-            </p>
+    <div class="login-container">
+      <div class="login-card">
+        <div class="login-header">
+          <div class="login-logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
           </div>
+          <h1 class="login-title">Grupo ES</h1>
+          <p class="login-subtitle">Ingresa tus credenciales para acceder al sistema</p>
         </div>
+
+        <div id="loginError" class="login-error"></div>
+
+        <form id="loginForm" action="/api/auth/login" method="post" novalidate>
+          <div class="form-group">
+            <label for="userEmail" class="form-label">
+              Correo Electrónico <span class="required">*</span>
+            </label>
+            <div class="input-wrapper">
+              <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2"/>
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+              </svg>
+              <input
+                type="email"
+                class="form-input"
+                id="userEmail"
+                name="usuario"
+                placeholder="tu@correo.com"
+                autocomplete="email"
+                required
+              />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="userPassword" class="form-label">
+              Contraseña <span class="required">*</span>
+            </label>
+            <div class="input-wrapper">
+              <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <input
+                type="password"
+                class="form-input"
+                id="userPassword"
+                name="clave"
+                placeholder="••••••••"
+                autocomplete="current-password"
+                required
+              />
+            </div>
+          </div>
+
+          <div class="login-options">
+            <label class="checkbox-wrapper">
+              <input type="checkbox" id="rememberMe" />
+              <span class="checkbox-label">Mantenerme conectado</span>
+            </label>
+            <a href="#" class="forgot-link">¿Olvidaste tu contraseña?</a>
+          </div>
+
+          <button type="submit" class="btn-submit" id="loginButton">
+            <span class="spinner"></span>
+            <span class="btn-text">Iniciar Sesión</span>
+          </button>
+        </form>
+      </div>
+
+      <div class="login-footer">
+        &copy; <script>document.write(new Date().getFullYear())</script> Grupo ES &mdash; <span>Sistema Mia</span>
       </div>
     </div>
 
-    <!-- end auth-fluid-->
-    <!-- Vendor js -->
-    <script src="/assets/js/vendors.min.js"></script>
-
-    <!-- App js -->
-    <script src="/assets/js/app.js"></script>
     <script src="/assets/js/pages/login.js"></script>
   </body>
-
-  <!-- Mirrored from coderthemes.com/vona/layouts/auth-sign-in.html by HTTrack Website Copier/3.x [XR&CO'2014], Wed, 27 May 2026 15:45:07 GMT -->
 </html>

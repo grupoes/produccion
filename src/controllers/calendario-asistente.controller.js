@@ -43,6 +43,26 @@ class CalendarioAsistenteController {
     }
   }
 
+  // GET /api/calendario-asistente/usuario-ocupa-fecha?usuario_id=N&fecha=YYYY-MM-DD
+  // Indica si el usuario tiene bloques en horario_usuario para esa fecha.
+  async getUsuarioOcupaFecha(req, res) {
+    try {
+      const usuarioId =
+        req.query.usuario_id != null ? Number(req.query.usuario_id) : null;
+      const fecha = String(req.query.fecha || "").trim() || null;
+      const data = await calendarioAsistenteService.getUsuarioOcupaFecha(
+        usuarioId,
+        fecha,
+      );
+      return res.json({ success: true, data });
+    } catch (error) {
+      console.error("CalendarioAsistente.getUsuarioOcupaFecha error:", error);
+      return res
+        .status(500)
+        .json({ error: "Error interno al verificar la fecha." });
+    }
+  }
+
   // GET /api/calendario-asistente/reuniones
   // Lista las ACTIVIDADES cuya tarea es de tipo REUNION.
   // Acepta:

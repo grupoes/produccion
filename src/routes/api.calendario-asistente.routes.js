@@ -9,5 +9,9 @@ router.get(
   "/horario-ultimo",
   calendarioAsistenteController.getUltimoHorarioUsuario,
 );
+router.get(
+  "/usuario-ocupa-fecha",
+  calendarioAsistenteController.getUsuarioOcupaFecha,
+);
 
 export default router;

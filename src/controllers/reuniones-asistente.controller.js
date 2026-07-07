@@ -194,6 +194,22 @@ class ReunionesAsistenteController {
     }
   }
 
+  // PATCH /api/calendario-asistente/reuniones/:id/ajustar-duracion
+  async ajustarDuracion(req, res) {
+    const guard = ensureAsistenteProduccion(req);
+    if (!guard.ok) return res.status(guard.status).json(guard.body);
+    try {
+      const b = req.body || {};
+      const data = await reunionesAsistenteService.ajustarDuracion({
+        actividadId: req.params.id,
+        nuevaDuracionMinutos: b.duracion_minutos,
+      });
+      return res.json({ success: true, data });
+    } catch (err) {
+      return sendServiceError(res, err, "ajustarDuracion");
+    }
+  }
+
   // DELETE /api/calendario-asistente/reuniones/:id
   async eliminar(req, res) {
     const guard = ensureAsistenteProduccion(req);

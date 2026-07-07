@@ -103,6 +103,27 @@ const hmsToLocalDate = (s) => {
   );
 };
 
+// Retorna [{ini, fin}] huecos libres dentro de bloques de jornada,
+// excluyendo los eventos recibidos.
+const computeFreeSlotsOnDay = (bloques, eventos) => {
+  if (!bloques || bloques.length === 0) return [];
+  const sorted = [...eventos].sort((a, b) => a.ini - b.ini);
+  const out = [];
+  for (const b of bloques) {
+    let cursor = b.ini;
+    for (const e of sorted) {
+      const ei = e.iniAjustado ?? e.ini;
+      const ef = e.finAjustado ?? e.fin;
+      if (ef <= cursor || ei >= b.fin) continue;
+      if (ei > cursor) out.push({ ini: cursor, fin: Math.min(ei, b.fin) });
+      cursor = Math.max(cursor, ef);
+      if (cursor >= b.fin) break;
+    }
+    if (cursor < b.fin) out.push({ ini: cursor, fin: b.fin });
+  }
+  return out.filter((h) => h.fin - h.ini >= 5);
+};
+
 class ReunionesAsistenteService {
   // -----------------------------------------------------------------------
   // Búsqueda de prospectos para el modal "Nueva reunión"
@@ -786,6 +807,13 @@ class ReunionesAsistenteService {
           ? fmtLocalDate(prospecto.fecha_entrega)
           : String(prospecto.fecha_entrega).slice(0, 10))
       : null;
+    if (deadline && fechaStr > deadline) {
+      const e = new Error(
+        `No se puede programar: la fecha supera la fecha de entrega (${deadline}). Cambia de auxiliar.`,
+      );
+      e.code = "CONFLICT";
+      throw e;
+    }
 
     // ---- 3) Normalizar horario_usuario legacy ANTES de planificar ----
     await prisma.$transaction(async (tx) => {
@@ -848,12 +876,39 @@ class ReunionesAsistenteService {
       throw e;
     }
 
-    // ---- 5) Persistir: actividades + horario_usuario en una transacción ----
+    // ---- 5) Persistir: aplicar plan (moves/splits/chainCascades) y crear
+    //          la nueva actividad en una sola operación atómica. ----
     const horaIniMin = hmsToMin(horaIniStr);
     const horaIniNorm = minToHHMM(horaIniMin ?? 0);
     const horaFinNorm = minToHHMM((horaIniMin ?? 0) + duracion);
 
+    const motivoTxt = motivo
+      ? String(motivo).slice(0, 255)
+      : "Programación inicial de reunión";
+
+    const moves = [...(plan.moves || [])];
+    const splits = [...(plan.splits || [])];
+    const disableBlocks = [...(plan.disableBlocks || [])];
+
+    const movesRes = moves.length
+      ? await schedulerService.applyMoves(moves, motivoTxt)
+      : { applied: 0 };
+    const splitsRes = splits.length
+      ? await schedulerService.applySplits(splits, motivoTxt)
+      : { applied: { splits: 0, overflow: 0, cascadeMoves: 0 } };
+
     const result = await prisma.$transaction(async (tx) => {
+      // Deshabilitar bloques de otras actividades que quedaron después de
+      // la reunión en el mismo día. completeActividades los re-ubicará.
+      if (disableBlocks.length > 0) {
+        for (const db of disableBlocks) {
+          await tx.horario_usuario.update({
+            where: { id: Number(db.horario_id) },
+            data: { estado: false, updated_at: new Date() },
+          });
+        }
+      }
+
       const nueva = await tx.actividades.create({
         data: {
           prospecto_id,
@@ -868,7 +923,7 @@ class ReunionesAsistenteService {
           fecha_inicio: new Date(fechaStr),
           hora_inicio: hmsToLocalDate(horaIniNorm),
           usuario_register: asistenteId || null,
-          motivo_reprograma: motivo ? String(motivo).slice(0, 255) : null,
+          motivo_reprograma: motivoTxt,
           created_at: new Date(),
           updated_at: new Date(),
         },
@@ -888,7 +943,16 @@ class ReunionesAsistenteService {
           updated_at: new Date(),
         },
       });
-      return { actividad: nueva, horario: hu };
+      return {
+        actividad: nueva,
+        horario: hu,
+        applied: {
+          moves: movesRes.applied || 0,
+          splits: splitsRes.applied?.splits || 0,
+          overflow: splitsRes.applied?.overflow || 0,
+          cascadeMoves: splitsRes.applied?.cascadeMoves || 0,
+        },
+      };
     });
 
     return {
@@ -914,6 +978,8 @@ class ReunionesAsistenteService {
       plan: {
         reason: plan.reason,
         moves: plan.moves,
+        splits: plan.splits,
+        applied: result.applied,
       },
     };
   }
@@ -1036,6 +1102,13 @@ class ReunionesAsistenteService {
           ? fmtLocalDate(act.prospectos.fecha_entrega)
           : String(act.prospectos.fecha_entrega).slice(0, 10))
       : null;
+    if (deadline && fecha > deadline) {
+      const e = new Error(
+        `No se puede reprogramar: la fecha (${fecha}) supera la fecha de entrega (${deadline}). Cambia de auxiliar.`,
+      );
+      e.code = "CONFLICT";
+      throw e;
+    }
     const prioridad = act.prioridad || null;
 
     const plan = await schedulerService.placeActivity(
@@ -1086,6 +1159,8 @@ class ReunionesAsistenteService {
       });
 
       const moves = [...(plan.moves || [])];
+      const splits = [...(plan.splits || [])];
+      const disableBlocks = [...(plan.disableBlocks || [])];
       if (hu) {
         moves.push({
           actividad_id: id,
@@ -1116,6 +1191,20 @@ class ReunionesAsistenteService {
       const applyRes = moves.length
         ? await schedulerService.applyMoves(moves, motivoTxt)
         : { applied: 0 };
+      const splitsRes = splits.length
+        ? await schedulerService.applySplits(splits, motivoTxt)
+        : { applied: { splits: 0, overflow: 0, cascadeMoves: 0 } };
+
+      // Deshabilitar bloques de otras actividades que quedaron después de
+      // la reunión en el mismo día. completeActividades los re-ubicará.
+      if (disableBlocks.length > 0) {
+        for (const db of disableBlocks) {
+          await tx.horario_usuario.update({
+            where: { id: Number(db.horario_id) },
+            data: { estado: false, updated_at: new Date() },
+          });
+        }
+      }
 
       // Actualizar la actividad: nuevos fecha/hora + motivo.
       const upd = await tx.actividades.update({
@@ -1129,7 +1218,16 @@ class ReunionesAsistenteService {
         },
       });
 
-      return { actividad: upd, applied: applyRes.applied || 0, plan };
+      return {
+        actividad: upd,
+        applied: {
+          moves: applyRes.applied || 0,
+          splits: splitsRes.applied?.splits || 0,
+          overflow: splitsRes.applied?.overflow || 0,
+          cascadeMoves: splitsRes.applied?.cascadeMoves || 0,
+        },
+        plan,
+      };
     });
 
     return {
@@ -1148,7 +1246,8 @@ class ReunionesAsistenteService {
       plan: {
         reason: plan.reason,
         moves: plan.moves,
-        movesApplied: result.applied,
+        splits: plan.splits,
+        applied: result.applied,
       },
     };
   }
@@ -1296,6 +1395,13 @@ class ReunionesAsistenteService {
           ? fmtLocalDate(act.prospectos.fecha_entrega)
           : String(act.prospectos.fecha_entrega).slice(0, 10))
       : null;
+    if (deadline && fechaYmd > deadline) {
+      const e = new Error(
+        `No se puede reasignar: la fecha (${fechaYmd}) supera la fecha de entrega (${deadline}). Cambia de auxiliar.`,
+      );
+      e.code = "CONFLICT";
+      throw e;
+    }
     const prioridad = act.prioridad || null;
 
     const plan = await schedulerService.placeActivity(
@@ -1330,7 +1436,32 @@ class ReunionesAsistenteService {
       ? String(motivo).slice(0, 255)
       : `Reasignada de usuario #${act.usuario_id} a #${nuevo_uid}`;
 
+    // Aplicar primero el plan del scheduler (moves, splits, chainCascades)
+    // para abrir hueco en el calendario del usuario destino ANTES de
+    // crear el nuevo slot. Si no entran, el error ya fue lanzado arriba.
+    const moves = [...(plan.moves || [])];
+    const splits = [...(plan.splits || [])];
+    const disableBlocks = [...(plan.disableBlocks || [])];
+
+    const movesRes = moves.length
+      ? await schedulerService.applyMoves(moves, motivoTxt)
+      : { applied: 0 };
+    const splitsRes = splits.length
+      ? await schedulerService.applySplits(splits, motivoTxt)
+      : { applied: { splits: 0, overflow: 0, cascadeMoves: 0 } };
+
     const result = await prisma.$transaction(async (tx) => {
+      // Deshabilitar bloques de otras actividades que quedaron después de
+      // la reunión en el mismo día. completeActividades los re-ubicará.
+      if (disableBlocks.length > 0) {
+        for (const db of disableBlocks) {
+          await tx.horario_usuario.update({
+            where: { id: Number(db.horario_id) },
+            data: { estado: false, updated_at: new Date() },
+          });
+        }
+      }
+
       // 1) Cerrar el horario_usuario viejo (estado=false) si existía.
       const huViejo = await tx.horario_usuario.findFirst({
         where: { actividad_id: id, estado: true },
@@ -1373,7 +1504,17 @@ class ReunionesAsistenteService {
         },
       });
 
-      return { actividad: upd, horarioViejoId: huViejo?.id || null, horarioNuevo: huNuevo };
+      return {
+        actividad: upd,
+        horarioViejoId: huViejo?.id || null,
+        horarioNuevo: huNuevo,
+        applied: {
+          moves: movesRes.applied || 0,
+          splits: splitsRes.applied?.splits || 0,
+          overflow: splitsRes.applied?.overflow || 0,
+          cascadeMoves: splitsRes.applied?.cascadeMoves || 0,
+        },
+      };
     });
 
     return {
@@ -1394,6 +1535,8 @@ class ReunionesAsistenteService {
       plan: {
         reason: plan.reason,
         moves: plan.moves,
+        splits: plan.splits,
+        applied: result.applied,
       },
     };
   }
@@ -1558,6 +1701,13 @@ class ReunionesAsistenteService {
         ? fmtLocalDate(act.prospectos.fecha_entrega)
         : String(act.prospectos.fecha_entrega).slice(0, 10)
       : null;
+    if (deadline && fechaStr > deadline) {
+      const e = new Error(
+        `No se puede programar: la fecha (${fechaStr}) supera la fecha de entrega (${deadline}). Cambia de auxiliar.`,
+      );
+      e.code = "CONFLICT";
+      throw e;
+    }
 
     // Validar que el slot específico esté libre.
     const slotVal = await this.validarSlotLibre(
@@ -1625,9 +1775,12 @@ class ReunionesAsistenteService {
     // Persistencia: aplica moves de compactación y splits (particiones),
     // luego actualiza la actividad y crea el horario_usuario de la reunión.
     // Todo dentro de UNA transacción para que sea atómico.
+    const affectedGaps = plan.affectedGaps || [];
+
     const result = await prisma.$transaction(async (tx) => {
       const moves = [...(plan.moves || [])];
       const splits = [...(plan.splits || [])];
+      const disableBlocks = [...(plan.disableBlocks || [])];
 
       const movesRes = moves.length
         ? await schedulerService.applyMoves(moves, motivoTxt)
@@ -1636,13 +1789,24 @@ class ReunionesAsistenteService {
         ? await schedulerService.applySplits(splits, motivoTxt)
         : { applied: { splits: 0, overflow: 0, cascadeMoves: 0 } };
 
+      // Deshabilitar bloques de otras actividades que quedaron después de
+      // la reunión en el mismo día. completeActividades los re-ubicará.
+      if (disableBlocks.length > 0) {
+        for (const db of disableBlocks) {
+          await tx.horario_usuario.update({
+            where: { id: Number(db.horario_id) },
+            data: { estado: false, updated_at: new Date() },
+          });
+        }
+      }
+
       const upd = await tx.actividades.update({
         where: { id },
         data: {
           usuario_id: uid,
           fecha_inicio: new Date(fechaStr),
           hora_inicio: hmsToLocalDate(horaIniNorm),
-          tiempo_estimado_minutos: duracion,
+          tiempo_estimado_minutos: act.tiempo_estimado_minutos,
           prioridad,
           bloqueada,
           color:
@@ -1683,6 +1847,27 @@ class ReunionesAsistenteService {
       };
     });
 
+    // Tras crear el slot de la reunión, deshabilitar los bloques de otras
+    // actividades que quedan después de la última posición de la actividad
+    // afectada, para que completeActividades reprograme todo desde ahí.
+    // Se hace FUERA de la transacción principal; si falla no aborta.
+    const affectedActId =
+      affectedGaps.length > 0
+        ? affectedGaps[0].actividad_id
+        : await this.#findActividadConMayorGap(uid, id, fechaStr);
+    if (affectedActId) {
+      await schedulerService.disableBlocksAfterPosition(
+        uid,
+        affectedActId,
+        fechaStr,
+      );
+    }
+    const rebalance = await this.rebalanceUsuario(uid, fechaStr, {
+      ignorarActividadId: id,
+      motivo: "Rebalance post-programación inicial",
+      prioritizeActividadId: affectedActId,
+    });
+
     return {
       actividad: {
         id: result.actividad.id,
@@ -1715,6 +1900,792 @@ class ReunionesAsistenteService {
           ...(plan.interBlocked || []),
         ],
       },
+      rebalance: rebalance
+        ? {
+            applied: (rebalance.applied || []).length,
+            blocked: rebalance.blocked || [],
+            skipped: rebalance.skipped || [],
+            totalGapInicial: rebalance.totalGapInicial || 0,
+            totalGapCubierto: rebalance.totalGapCubierto || 0,
+          }
+        : null,
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // #findActividadConMayorGap: busca la actividad (distinta de ignorarId)
+  // con el mayor gap entre tiempo_estimado_minutos y lo programado.
+  // Devuelve su ID o null si ninguna tiene gap.
+  // -----------------------------------------------------------------------
+  async #findActividadConMayorGap(usuarioId, ignorarId, fechaStr) {
+    try {
+      const uid = Number(usuarioId);
+      const ignore = Number(ignorarId);
+      if (!uid) return null;
+      const acts = await prisma.actividades.findMany({
+        where: {
+          usuario_id: uid,
+          estado: true,
+          estado_progreso: { notIn: ["completada", "cancelada"] },
+          id: ignore ? { not: ignore } : undefined,
+          bloqueada: false,
+          prioridad: { not: "ALTA" },
+        },
+        select: {
+          id: true,
+          tiempo_estimado_minutos: true,
+          horario_usuario: {
+            where: { estado: true },
+            select: { duracion_minutos: true },
+          },
+          tarea: { select: { tipo_tarea: true } },
+        },
+      });
+      let mejor = null;
+      let mayorGap = 0;
+      for (const a of acts) {
+        const tipoTareaId = a.tarea?.tipo_tarea != null
+          ? Number(a.tarea.tipo_tarea)
+          : null;
+        if (tipoTareaId === 2) continue; // saltar reuniones
+        const est = Number(a.tiempo_estimado_minutos) || 0;
+        if (est <= 0) continue;
+        const totalProg = (a.horario_usuario || []).reduce(
+          (acc, h) => acc + (Number(h.duracion_minutos) || 0),
+          0,
+        );
+        const gap = est - totalProg;
+        if (gap > mayorGap) {
+          mayorGap = gap;
+          mejor = Number(a.id);
+        }
+      }
+      return mejor;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Re-balance: tras programar/mover una reunión, recorrer las actividades
+  // del usuario destino y rellenar el gap entre lo programado y su
+  // `tiempo_estimado_minutos`. Respetando ALTA y fecha_entrega.
+  //
+  // Se expone para que el controller pueda dispararlo tras crear o
+  // reprogramar. NO aborta la operación principal si falla: loguea y
+  // devuelve `null`.
+  // -----------------------------------------------------------------------
+  async rebalanceUsuario(usuarioId, fechaReferencia, opts = {}) {
+    try {
+      const uid = Number(usuarioId);
+      const fechaStr = String(fechaReferencia || "").slice(0, 10);
+      if (!uid || !fechaStr) return null;
+      const ignorarId = opts.ignorarActividadId
+        ? Number(opts.ignorarActividadId)
+        : null;
+      const prioritizeId = opts.prioritizeActividadId
+        ? Number(opts.prioritizeActividadId)
+        : null;
+      return await schedulerService.completeActividades(uid, fechaStr, {
+        ignorarActividadId: ignorarId,
+        diasHorizonte: opts.diasHorizonte || 14,
+        motivo: opts.motivo || "Rebalance post-inserción de reunión",
+        prioritizeActividadId: prioritizeId,
+        fillFreeSlots: opts.fillFreeSlots === true,
+      });
+    } catch (e) {
+      console.error("[rebalanceUsuario] error:", e?.message || e);
+      return null;
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Ajustar duración (mismo día, misma hora de inicio)
+  // -----------------------------------------------------------------------
+  // Cambia la duración de una reunión y desplaza las actividades NO-reunión
+  // posteriores para acomodar el cambio. Las reuniones posteriores son
+  // "anclas" fijas que no se mueven, pero el desplazamiento CONTINÚA más
+  // allá de cada una de ellas.
+  //
+  // Si delta > 0 (aumenta): las actividades NO-reunión se corren más tarde.
+  // Si delta < 0 (disminuye): las actividades NO-reunión se corren más temprano.
+  // Si se encuentra una reunión en el camino → esa queda fija, pero las
+  //   actividades NO-reunión que siguen después de ella sí se desplazan.
+  //
+  // body: { actividadId, nuevaDuracionMinutos }
+  async ajustarDuracion({ actividadId, nuevaDuracionMinutos }) {
+    const id = Number(actividadId);
+    if (!id) {
+      const e = new Error("actividad_id requerido.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    const act = await prisma.actividades.findUnique({
+      where: { id },
+      include: {
+        tarea: { select: { id: true, horas_estimadas: true } },
+        prospectos: { select: { fecha_entrega: true } },
+        horario_usuario: {
+          where: { estado: true },
+          orderBy: { id: "desc" },
+          take: 1,
+          select: { id: true, fecha: true, hora_inicio: true, hora_fin: true, duracion_minutos: true, categoria: true },
+        },
+      },
+    });
+    if (!act) {
+      const e = new Error("La actividad no existe.");
+      e.code = "NOT_FOUND";
+      throw e;
+    }
+    if (!act.estado) {
+      const e = new Error("La actividad está cancelada.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+    if (String(act.estado_progreso || "").toLowerCase() === "en_progreso") {
+      const e = new Error("No se puede ajustar la duración de una reunión en progreso.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    const slot = act.horario_usuario?.[0] || null;
+    const categoria = slot?.categoria || "potencial_cliente";
+    if (!slot) {
+      const e = new Error("La reunión no tiene un bloque de horario. Use 'Programar' primero.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    const duracionActual = Math.max(1, Number(act.tiempo_estimado_minutos) || Number(slot.duracion_minutos) || 60);
+    const nuevaDuracion = Math.max(5, Number(nuevaDuracionMinutos) || 0);
+    if (nuevaDuracion < 5) {
+      const e = new Error("La duración mínima es 5 minutos.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    const delta = nuevaDuracion - duracionActual;
+    if (delta === 0) {
+      return { sinCambios: true, mensaje: "La duración no cambió." };
+    }
+
+    // Cargar contexto del día. Obtenemos la fecha como string directo de la
+    // BD para evitar problemas de zona horaria al convertir Date de Prisma.
+    const fechaRow = await prisma.$queryRawUnsafe(
+      `SELECT TO_CHAR(hu.fecha, 'YYYY-MM-DD') AS fecha_str FROM horario_usuario hu WHERE hu.id = $1`,
+      Number(slot.id),
+    );
+    const fecha = fechaRow?.[0]?.fecha_str;
+    if (!fecha) {
+      const e = new Error("No se pudo determinar la fecha del bloque de horario.");
+      e.code = "NOT_FOUND";
+      throw e;
+    }
+    const ctx = await schedulerService.loadDayContext(act.usuario_id, fecha);
+    if (!ctx || ctx.bloques.length === 0) {
+      const e = new Error("El usuario no tiene bloques de horario configurados para ese día.");
+      e.code = "CONFLICT";
+      throw e;
+    }
+
+    // Encontrar el evento actual por horario_id (debe coincidir con slot)
+    const currentEvent = ctx.eventos.find((e) => e.horario_id === Number(slot.id));
+    if (!currentEvent) {
+      const e = new Error("No se encontró el bloque de la reunión en el calendario.");
+      e.code = "NOT_FOUND";
+      throw e;
+    }
+
+    const currentStart = currentEvent.ini;
+    const newCurrentEnd = currentEvent.fin + delta;
+
+    // Validar deadline — si el último bloque ya está después del
+    // deadline, no se puede extender (solo reducir).
+    const deadline = act.prospectos?.fecha_entrega;
+    if (delta > 0 && deadline) {
+      const dlStr = deadline instanceof Date
+        ? `${deadline.getUTCFullYear()}-${String(deadline.getUTCMonth() + 1).padStart(2, "0")}-${String(deadline.getUTCDate()).padStart(2, "0")}`
+        : String(deadline).slice(0, 10);
+      if (fecha > dlStr) {
+        const e = new Error(
+          `No se puede programar: faltan ${delta} minutos. Cambia de auxiliar.`,
+        );
+        e.code = "CONFLICT";
+        throw e;
+      }
+    }
+
+    // Validar que la reunión no invada otra reunión barrera.
+    const nextMeeting = ctx.eventos
+      .filter((e) => e.actividad_id !== id && e.esReunion && e.ini >= currentEvent.fin)
+      .sort((a, b) => a.ini - b.ini)[0] || null;
+    if (nextMeeting && newCurrentEnd > nextMeeting.ini) {
+      const e = new Error(
+        `La nueva duración hace que la reunión invada la reunión fija #${nextMeeting.actividad_id} (${minToHHMM(nextMeeting.ini)}-${minToHHMM(nextMeeting.fin)}). ` +
+        `No se puede extender más allá de la próxima reunión.`,
+      );
+      e.code = "CONFLICT";
+      throw e;
+    }
+
+    // Eventos posteriores ordenados por inicio.
+    // Cuando se REDUCE (delta<0) el fin nuevo queda antes del fin viejo, así
+    // que tomamos el límite mínimo para capturar también los eventos que
+    // quedaron entre newCurrentEnd y currentEvent.fin (el "hueco liberado").
+    const eventsFrom = delta < 0 ? Math.min(newCurrentEnd, currentEvent.fin) : currentEvent.fin;
+    const subsequentEvents = ctx.eventos
+      .filter((e) => e.ini >= eventsFrom && e.actividad_id !== id)
+      .sort((a, b) => a.ini - b.ini);
+
+    // 6. Construir lista de ocupados (obstáculos fijos: la reunión actual + reuniones fijas)
+    const ocupados = [];
+
+    // Reunión actual con su nuevo fin
+    ocupados.push({ ini: currentStart, fin: newCurrentEnd });
+
+    // Todas las reuniones (son fijas, no se mueven)
+    for (const evt of ctx.eventos) {
+      if (evt.actividad_id !== id && evt.esReunion) {
+        ocupados.push({ ini: evt.ini, fin: evt.fin });
+      }
+    }
+
+    // --- Función auxiliar: mueve un bloque al primer hueco disponible >= minStart ---
+    // Devuelve el fin del bloque ya colocado.
+    // SÍ fragmenta: empaca secuencialmente en los espacios libres.
+    const tryPlace = (minStart, durTotal, evt) => {
+      let durRestante = durTotal;
+      let primerIni = null;
+      let primerFin = null;
+      const overflows = [];
+      let currentStart = minStart;
+
+      const sortedOcup = [...ocupados].sort((a, b) => a.ini - b.ini);
+
+      for (const block of ctx.bloques) {
+        if (durRestante <= 0) break;
+        if (block.fin <= currentStart) continue;
+
+        let seg = Math.max(block.ini, currentStart);
+
+        for (const occ of sortedOcup) {
+          if (durRestante <= 0) break;
+          if (occ.fin <= seg) continue;
+          if (occ.ini >= block.fin) break;
+
+          if (seg < occ.ini) {
+            const espacioLibre = occ.ini - seg;
+            if (espacioLibre >= 5) {
+              const durPorPoner = Math.min(durRestante, espacioLibre);
+              const nuevoIni = seg;
+              const nuevoFin = seg + durPorPoner;
+              if (primerIni === null) {
+                primerIni = nuevoIni;
+                primerFin = nuevoFin;
+              } else {
+                overflows.push({ hi: minToHHMM(nuevoIni), hf: minToHHMM(nuevoFin), len: durPorPoner, fecha, hfMin: nuevoFin });
+              }
+              ocupados.push({ ini: nuevoIni, fin: nuevoFin });
+              durRestante -= durPorPoner;
+              seg = nuevoFin;
+            }
+          }
+          seg = Math.max(seg, occ.fin);
+        }
+
+        if (durRestante > 0 && seg < block.fin) {
+          const espacioLibre = block.fin - seg;
+          if (espacioLibre >= 5) {
+            const durPorPoner = Math.min(durRestante, espacioLibre);
+            const nuevoIni = seg;
+            const nuevoFin = seg + durPorPoner;
+            if (primerIni === null) {
+              primerIni = nuevoIni;
+              primerFin = nuevoFin;
+            } else {
+              overflows.push({ hi: minToHHMM(nuevoIni), hf: minToHHMM(nuevoFin), len: durPorPoner, fecha, hfMin: nuevoFin });
+            }
+            ocupados.push({ ini: nuevoIni, fin: nuevoFin });
+            durRestante -= durPorPoner;
+            currentStart = nuevoFin;
+          }
+        }
+      }
+
+      if (primerIni !== null) {
+        moves.push({
+          actividad_id: Number(evt.actividad_id),
+          horario_id: Number(evt.horario_id),
+          hi: minToHHMM(primerIni),
+          hf: minToHHMM(primerFin),
+          fecha,
+          hiMin: primerIni,
+          hfMin: primerFin,
+          len: primerFin - primerIni,
+          overflow: overflows
+        });
+      } else {
+        // No se pudo poner ni el primer chunk
+        blocksToDisable.push({ horario_id: Number(evt.horario_id), actividad_id: Number(evt.actividad_id), minutes: durTotal });
+      }
+
+      if (durRestante > 0) {
+        pendingMinutes.push({ actividad_id: Number(evt.actividad_id), minutes: durRestante });
+      }
+
+      return primerFin !== null ? (overflows.length > 0 ? overflows[overflows.length - 1].hfMin : primerFin) : minStart;
+    };
+
+    const moves = [];
+    const blocksToDisable = [];
+    const pendingMinutes = [];
+
+    // ---- Colocar actividades posteriores respetando reuniones como anclas ----
+    // Solo aplicable si delta > 0. Si delta < 0, se maneja de forma global
+    // borrando futuros y reempaquetando.
+    if (delta > 0) {
+      let cursor = newCurrentEnd;
+
+      for (const evt of subsequentEvents) {
+        if (evt.esReunion) {
+          // Reunión fija: solo avanzar cursor si la invadimos
+          if (cursor > evt.ini) {
+            cursor = Math.max(cursor, evt.fin);
+          }
+          continue;
+        }
+
+        const dur = evt.fin - evt.ini;
+        // Reubicar siempre para empacar secuencialmente sin dejar huecos
+        const placed = tryPlace(cursor, dur, evt);
+        if (placed > cursor) cursor = placed;
+      }
+    }
+
+
+    // Validar que ningún movimiento invada una reunión fija (barreras).
+    for (const m of moves) {
+      const conflicto = ctx.eventos.find(
+        (e) =>
+          e.actividad_id !== id &&
+          e.esReunion &&
+          m.hiMin < e.fin &&
+          m.hfMin > e.ini,
+      );
+      if (conflicto) {
+        const e = new Error(
+          `La actividad #${m.actividad_id} reubicada (${m.hi}-${m.hf}) invade la reunión fija #${conflicto.actividad_id} (${minToHHMM(conflicto.ini)}-${minToHHMM(conflicto.fin)}). ` +
+          `No hay suficiente espacio incluso después de la barrera. Mové manualmente la reunión fija para hacer lugar.`,
+        );
+        e.code = "CONFLICT";
+        throw e;
+      }
+    }
+
+    // Validar que el nuevo fin de la actual no exceda su bloque de jornada.
+    const jornadaValida = ctx.bloques.some((b) => currentStart >= b.ini && newCurrentEnd <= b.fin);
+    if (!jornadaValida) {
+      const e = new Error("La nueva duración excede el bloque de horario laboral del usuario.");
+      e.code = "CONFLICT";
+      throw e;
+    }
+
+    // Aplicar cambios en BD.
+    const motivoTxt = `Ajuste de duración: ${duracionActual} → ${nuevaDuracion} min`;
+
+    const movesForApply = moves.map((m) => ({
+      actividad_id: m.actividad_id,
+      horario_id: m.horario_id,
+      hi: m.hi,
+      hf: m.hf,
+      fecha: m.fecha,
+      len: m.len,
+      overflow: m.overflow,
+    }));
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Actualizar el slot actual.
+      const nuevaDuracionSlot = newCurrentEnd - currentStart;
+      await tx.$executeRawUnsafe(
+        `UPDATE horario_usuario
+            SET hora_fin    = $1::timetz,
+                duracion_minutos = $2,
+                updated_at  = now()
+          WHERE id = $3`,
+        hmsToLocalDate(minToHHMM(newCurrentEnd)),
+        nuevaDuracionSlot,
+        Number(slot.id),
+      );
+
+      // Actualizar la actividad.
+      await tx.actividades.update({
+        where: { id },
+        data: {
+          tiempo_estimado_minutos: nuevaDuracion,
+          motivo_reprograma: motivoTxt,
+          updated_at: new Date(),
+        },
+      });
+
+      // Aplicar movimientos de actividades posteriores.
+      // NOTA: applyMoves abre su propia transacción, así que se llama FUERA de esta.
+      // Aquí solo guardamos la referencia a los moves para aplicarlos después.
+
+      // Deshabilitar bloques que quedaron fuera de la jornada laboral.
+      if (blocksToDisable.length > 0) {
+        const ids = blocksToDisable.map((b) => b.horario_id);
+        await tx.horario_usuario.updateMany({
+          where: { id: { in: ids } },
+          data: { estado: false, updated_at: new Date() },
+        });
+      }
+
+      return { disabled: blocksToDisable.length, blocksToDisable, pendingMinutes };
+    });
+
+    // uid se necesita para el merge y para el Paso 2
+    const uid = act.usuario_id;
+
+    // Aplicar movimientos FUERA de la transacción (evita transacciones anidadas)
+    let movesApplied = 0;
+    if (movesForApply.length > 0) {
+      const applyRes = await schedulerService.applyMoves(movesForApply, motivoTxt);
+      movesApplied = applyRes.applied || 0;
+    }
+
+    // Limpiar bloques adyacentes del mismo día que se hayan fragmentado por el empuje
+    await schedulerService.mergeAdjacentBlocks(uid, fecha).catch(() => {});
+
+    // Paso 2: expandir bloques existentes en días posteriores y
+    // correr en cascada otras actividades para hacer lugar.
+    // Se procesa por día (no por btd) para que las cascadas del mismo día
+    // se acumulen correctamente.
+    let warnings = [];
+    let totalPending = 0;
+    if (result.blocksToDisable?.length > 0 || result.pendingMinutes?.length > 0) {
+      // Agrupar minutos pendientes por actividad_id
+      // Incluye tanto bloques deshabilitados (blocksToDisable) como
+      // minutos que no cupieron parcialmente (pendingMinutes).
+      // IMPORTANTE: verificar contra tiempo real en BD para evitar pendientes fantasma.
+      const pendingByAct = new Map();
+      for (const btd of result.blocksToDisable) {
+        const key = Number(btd.actividad_id);
+        pendingByAct.set(key, (pendingByAct.get(key) || 0) + Number(btd.minutes));
+      }
+      for (const pm of result.pendingMinutes || []) {
+        const key = Number(pm.actividad_id);
+        pendingByAct.set(key, (pendingByAct.get(key) || 0) + Number(pm.minutes));
+      }
+
+      // Validar contra tiempo real en BD: si la actividad ya tiene programado
+      // suficiente tiempo, no la agregar a pendientes.
+      for (const [actId, pend] of pendingByAct) {
+        if (pend <= 0) { pendingByAct.delete(actId); continue; }
+        const actRow = await prisma.actividades.findUnique({
+          where: { id: actId },
+          select: { tiempo_estimado_minutos: true, horario_usuario: { where: { estado: true }, select: { duracion_minutos: true } } },
+        });
+        if (!actRow) { pendingByAct.delete(actId); continue; }
+        const totalProg = (actRow.horario_usuario || []).reduce((s, h) => s + (Number(h.duracion_minutos) || 0), 0);
+        const estimado = Number(actRow.tiempo_estimado_minutos) || 0;
+        const realPending = Math.max(0, estimado - totalProg);
+        if (realPending <= 0) {
+          pendingByAct.delete(actId);
+        } else {
+          pendingByAct.set(actId, realPending);
+        }
+      }
+
+      // Cargar deadlines de actividades pendientes
+      const pendingActIds = [...pendingByAct.keys()];
+      const pendingActRows = await prisma.actividades.findMany({
+        where: { id: { in: pendingActIds } },
+        select: {
+          id: true,
+          prospectos: { select: { fecha_entrega: true } },
+          tarea: { select: { tipo_tarea_tarea_tipo_tareaTotipo_tarea: { select: { id: true } } } },
+        },
+      });
+      const deadlines = new Map();
+      const esReunionAct = new Set();
+      for (const a of pendingActRows) {
+        const dl = a.prospectos?.fecha_entrega;
+        if (dl) {
+          const d = dl instanceof Date
+            ? `${dl.getUTCFullYear()}-${String(dl.getUTCMonth() + 1).padStart(2, "0")}-${String(dl.getUTCDate()).padStart(2, "0")}`
+            : String(dl).slice(0, 10);
+          deadlines.set(a.id, d);
+        }
+        if (a.tarea?.tipo_tarea_tarea_tipo_tareaTotipo_tarea?.id === 2) {
+          esReunionAct.add(a.id);
+        }
+      }
+      const cursorDate = new Date(parseLocalDate(fecha));
+      let safetyDays = 0;
+      totalPending = [...pendingByAct.values()].reduce((a, b) => a + b, 0);
+      while (totalPending > 0 && safetyDays < 60) {
+        safetyDays++;
+        cursorDate.setDate(cursorDate.getDate() + 1);
+        const dateStr = fmtLocalDate(cursorDate);
+        // Verificar deadlines — si el día supera la fecha de entrega,
+        // la actividad no puede expandirse más acá.
+        for (const [actId, pend] of pendingByAct) {
+          if (pend <= 0) continue;
+          const dl = deadlines.get(actId);
+          if (dl && dateStr > dl) {
+            warnings.push({ actividad_id: actId, faltan: pend });
+            pendingByAct.set(actId, 0);
+          }
+        }
+        const dayCtx = await schedulerService.loadDayContext(uid, dateStr);
+        if (!dayCtx || dayCtx.bloques.length === 0) continue;
+        const eventos = dayCtx.eventos;
+        // Mapa de desplazamientos acumulados por horario_id para este día
+        const dayShifts = new Map();
+        // Obtener actividades con pendiente que tengan bloque propio en este día
+        const actConBloque = [];
+        for (const [actId, pend] of pendingByAct) {
+          if (pend <= 0) continue;
+          // Deduplicar: agrupar bloques con mismo ini/fin (duplicados de
+          // completeActividades) para expandir solo el último de cada grupo.
+          const propiosUniq = new Map();
+          for (const e of eventos) {
+            if (e.actividad_id !== actId) continue;
+            const key = `${e.ini}-${e.fin}`;
+            if (!propiosUniq.has(key) || e.horario_id > propiosUniq.get(key).horario_id) {
+              propiosUniq.set(key, e);
+            }
+          }
+          const propios = [...propiosUniq.values()].sort((a, b) => a.ini - b.ini);
+          if (propios.length === 0) continue;
+          actConBloque.push({ actId, remaining: pend, ultimoPropio: propios[propios.length - 1] });
+        }
+        // Ordenar por posición del último bloque (ascendente)
+        actConBloque.sort((a, b) => a.ultimoPropio.ini - b.ultimoPropio.ini);
+        const dayMoves = [];
+        for (const item of actConBloque) {
+          if (item.remaining <= 0) continue;
+          const ultimoPropio = item.ultimoPropio;
+          // Ajustar por desplazamientos previos del mismo día
+          const shift = dayShifts.get(ultimoPropio.horario_id) || 0;
+          const bloqueIni = ultimoPropio.ini + shift;
+          const bloqueFin = ultimoPropio.fin + shift;
+
+          // Calcular cuánto espacio libre hay a partir del fin ajustado
+          // respetando la barrera de reuniones y el fin de la jornada
+          const jornadaBlock = dayCtx.bloques.find(
+            (b) => b.ini <= bloqueIni && bloqueIni < b.fin,
+          );
+          if (!jornadaBlock) continue;
+
+          // Próxima reunión DESPUÉS del fin ajustado del bloque (barrera)
+          const nextReunionDespues = eventos
+            .filter((e) => e.esReunion && e.ini >= bloqueFin)
+            .sort((a, b) => a.ini - b.ini)[0];
+          const barrier = nextReunionDespues ? nextReunionDespues.ini : jornadaBlock.fin;
+          const maxExpand = Math.min(jornadaBlock.fin, barrier);
+          const libre = maxExpand - bloqueFin;
+          if (libre <= 0) continue;
+
+          const expansion = Math.min(item.remaining, libre);
+          const nuevoHf = bloqueFin + expansion;
+          dayMoves.push({
+            actividad_id: item.actId,
+            horario_id: ultimoPropio.horario_id,
+            hi: minToHHMM(bloqueIni),
+            hf: minToHHMM(nuevoHf),
+            fecha: dateStr,
+          });
+          dayShifts.set(ultimoPropio.horario_id, (dayShifts.get(ultimoPropio.horario_id) || 0) + expansion);
+          item.remaining -= expansion;
+          pendingByAct.set(item.actId, item.remaining);
+
+          // Cascada: empujar secuencialmente los bloques NO-reunión que
+          // estén después del nuevo fin, SIN dejar huecos.
+          // Solo si la expansión invade algún bloque siguiente.
+          let cursorCascada = nuevoHf;
+          const siguientes = eventos
+            .filter((e) => !e.esReunion && e.actividad_id !== item.actId &&
+              (e.ini + (dayShifts.get(e.horario_id) || 0)) >= bloqueFin &&
+              e.horario_id !== ultimoPropio.horario_id)
+            .map((e) => {
+              const s = dayShifts.get(e.horario_id) || 0;
+              return { ...e, iniAj: e.ini + s, finAj: e.fin + s };
+            })
+            .sort((a, b) => a.iniAj - b.iniAj);
+
+          for (const se of siguientes) {
+            const dur = se.finAj - se.iniAj;
+            if (cursorCascada <= se.iniAj) {
+              // No hay invasión: avanzar cursor y continuar
+              cursorCascada = se.finAj;
+              continue;
+            }
+            // El cursor invade este bloque: moverlo
+            const nuevoIni = cursorCascada;
+            // Respetar reuniones fijas como barrera
+            const reunionBarrera = eventos
+              .filter((e) => e.esReunion && e.ini > nuevoIni)
+              .sort((a, b) => a.ini - b.ini)[0];
+            const seJornada = dayCtx.bloques.find(
+              (b) => b.ini <= nuevoIni && nuevoIni < b.fin,
+            );
+            if (!seJornada) {
+              // Cae fuera de la jornada → pendiente
+              pendingByAct.set(se.actividad_id, (pendingByAct.get(se.actividad_id) || 0) + dur);
+              continue;
+            }
+            const boundaryJornada = Math.min(seJornada.fin, reunionBarrera ? reunionBarrera.ini : seJornada.fin);
+            const nuevoFin = Math.min(nuevoIni + dur, boundaryJornada);
+            if (nuevoFin <= nuevoIni) {
+              pendingByAct.set(se.actividad_id, (pendingByAct.get(se.actividad_id) || 0) + dur);
+              continue;
+            }
+            const shiftSe = nuevoIni - se.iniAj;
+            dayMoves.push({
+              actividad_id: se.actividad_id,
+              horario_id: se.horario_id,
+              hi: minToHHMM(nuevoIni),
+              hf: minToHHMM(nuevoFin),
+              fecha: dateStr,
+            });
+            dayShifts.set(se.horario_id, (dayShifts.get(se.horario_id) || 0) + shiftSe);
+            cursorCascada = nuevoFin;
+            // Si quedó cortado → pendiente
+            if (nuevoFin < nuevoIni + dur) {
+              pendingByAct.set(se.actividad_id, (pendingByAct.get(se.actividad_id) || 0) + (nuevoIni + dur - nuevoFin));
+            }
+          }
+        }
+
+        // Segundo paso: actividades con pendiente que NO tenían bloque
+        // propio en este día. Se les crea un bloque NUEVO en el primer
+        // slot libre del día, manteniendo la secuencia cronológica.
+        {
+          // Construir eventos locales (existentes + dayMoves ajustados)
+          const localEventos = eventos.map((e) => ({
+            ...e,
+            iniAjustado: e.ini + (dayShifts.get(e.horario_id) || 0),
+            finAjustado: e.fin + (dayShifts.get(e.horario_id) || 0),
+          }));
+          for (const m of dayMoves) {
+            const im = hmsToMin(m.hi);
+            const fm = hmsToMin(m.hf);
+            if (im == null || fm == null) continue;
+            localEventos.push({
+              actividad_id: m.actividad_id,
+              horario_id: m.horario_id,
+              ini: im,
+              fin: fm,
+              iniAjustado: im,
+              finAjustado: fm,
+              esReunion: false,
+            });
+          }
+          // Cada actividad pendiente sin bloque en el día
+          for (const [actId, pend] of pendingByAct) {
+            if (pend <= 0) continue;
+            const yaTiene = localEventos.some((e) => e.actividad_id === actId);
+            if (yaTiene) continue;
+            // Recalcular slots libres por cada actividad, porque las
+            // inserciones previas modificaron localEventos.
+            const freeSlots = computeFreeSlotsOnDay(dayCtx.bloques, localEventos);
+            let porColocar = pend;
+            for (const slot of freeSlots) {
+              if (porColocar <= 0) break;
+              const disp = slot.fin - slot.ini;
+              if (disp < 5) continue;
+              const dur = Math.min(porColocar, disp);
+              const hiMin = slot.ini;
+              const hfMin = slot.ini + dur;
+              const tipoBloque = esReunionAct.has(actId) ? "reunion" : "actividad";
+              // Insertar nuevo bloque
+              const fechaDate = parseLocalDate(dateStr);
+              try {
+                const nb = await prisma.horario_usuario.create({
+                  data: {
+                    actividad_id: actId,
+                    usuario_id: uid,
+                    fecha: fechaDate,
+                    hora_inicio: hmsToLocalDate(minToHHMM(hiMin)),
+                    hora_fin: hmsToLocalDate(minToHHMM(hfMin)),
+                    estado: true,
+                    tipo: tipoBloque,
+                    duracion_minutos: dur,
+                    created_at: new Date(),
+                    updated_at: new Date(),
+                  },
+                });
+                localEventos.push({
+                  actividad_id: actId,
+                  horario_id: nb.id,
+                  ini: hiMin,
+                  fin: hfMin,
+                  iniAjustado: hiMin,
+                  finAjustado: hfMin,
+                  esReunion: false,
+                });
+                porColocar -= dur;
+                pendingByAct.set(actId, porColocar);
+              } catch (_e) {
+                // No romper por fallo de inserción
+              }
+            }
+          }
+        }
+        if (dayMoves.length > 0) {
+          // Aplicar movimientos del día inmediatamente para que el
+          // siguiente día lea datos actualizados.
+          try {
+            await schedulerService.applyMoves(dayMoves, motivoTxt);
+          } catch (_) { /* no debe romper */ }
+          
+          // Limpiar fragmentación en este día
+          await schedulerService.mergeAdjacentBlocks(uid, dateStr).catch(() => {});
+        }
+        // Actualizar pendientes totales
+        totalPending = [...pendingByAct.values()].reduce((a, b) => a + b, 0);
+      }
+      // Si aún quedan pendientes sin resolver dentro de los 60 días,
+      // reportarlos como warnings.
+      if (totalPending > 0) {
+        for (const [actId, pend] of pendingByAct) {
+          if (pend <= 0) continue;
+          const yaAdvertido = warnings.some(w => w.actividad_id === actId);
+          if (!yaAdvertido) {
+            warnings.push({ actividad_id: actId, faltan: pend });
+          }
+        }
+      }
+    }
+
+    // Rebalancear post-ajuste solo para reducción (delta<0).
+    // Si reducimos la reunión, queda un hueco libre. Para empaquetar de
+    // manera secuencial y jalar eventos de días futuros hacia hoy,
+    // eliminamos los bloques posteriores y re-ejecutamos completeActividades.
+    if (delta < 0) {
+      await schedulerService.disableBlocksAfterPosition(uid, id, fecha, newCurrentEnd).catch(() => {});
+      await schedulerService.completeActividades(uid, fecha, {
+        ignorarActividadId: id,
+        motivo: "Rebalance post-reducción de duración",
+        fillFreeSlots: false,
+      }).catch(() => {});
+    }
+
+    return {
+      actividad_id: id,
+      duracion_anterior: duracionActual,
+      duracion_nueva: nuevaDuracion,
+      delta,
+      overflowMin: totalPending,
+      actividades_movidas: result.movesApplied || 0,
+      warnings: warnings && warnings.length > 0 ? warnings : undefined,
+      nuevo_horario: {
+        hora_inicio: minToHHMM(currentStart),
+        hora_fin: minToHHMM(newCurrentEnd),
+      },
     };
   }
 
@@ -1730,7 +2701,13 @@ class ReunionesAsistenteService {
     }
     const act = await prisma.actividades.findUnique({
       where: { id },
-      select: { id: true, estado: true, estado_progreso: true },
+      select: {
+        id: true,
+        estado: true,
+        estado_progreso: true,
+        usuario_id: true,
+        fecha_inicio: true,
+      },
     });
     if (!act) {
       const e = new Error("La actividad no existe.");
@@ -1745,10 +2722,47 @@ class ReunionesAsistenteService {
       throw e;
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const uid = Number(act.usuario_id);
+    if (!uid) {
+      const e = new Error("La actividad no tiene usuario asignado.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    // Tomar la fecha desde los bloques activos de la actividad (más confiable
+    // que `fecha_inicio`, que podría ser null).
+    const bloqueInfo = await prisma.$queryRawUnsafe(
+      `SELECT TO_CHAR(MIN(hu.fecha), 'YYYY-MM-DD') AS fecha_min,
+              TO_CHAR(MAX(hu.fecha), 'YYYY-MM-DD') AS fecha_max
+       FROM horario_usuario hu
+       WHERE hu.actividad_id = $1 AND hu.estado = true`,
+      id,
+    );
+    const fechaStr = bloqueInfo?.[0]?.fecha_min
+      ? String(bloqueInfo[0].fecha_min).slice(0, 10)
+      : act.fecha_inicio
+        ? (act.fecha_inicio instanceof Date
+          ? fmtLocalDate(act.fecha_inicio)
+          : String(act.fecha_inicio).slice(0, 10))
+        : null;
+
+    // Guardar los bloques que se van a cancelar (necesitamos sus posiciones
+    // para el corte del rebalance).
+    const blocksToCancel = await prisma.$queryRawUnsafe(
+      `SELECT hu.id, hu.actividad_id,
+              TO_CHAR(hu.fecha, 'YYYY-MM-DD') AS fecha,
+              EXTRACT(EPOCH FROM hu.hora_inicio::time)/60 AS hi,
+              EXTRACT(EPOCH FROM hu.hora_fin::time)/60 AS hf
+       FROM horario_usuario hu
+       WHERE hu.actividad_id = $1 AND hu.estado = true
+       ORDER BY hu.fecha ASC, hu.hora_inicio ASC`,
+      id,
+    );
+
+    const result = await prisma.$transaction(async (tx) => {
       await tx.actividades.update({
         where: { id },
-        data: { estado: false, updated_at: new Date() },
+        data: { estado: false, estado_progreso: "cancelada", updated_at: new Date() },
       });
       const huRes = await tx.horario_usuario.updateMany({
         where: { actividad_id: id, estado: true },
@@ -1756,6 +2770,169 @@ class ReunionesAsistenteService {
       });
       return { actividad_id: id, horario_usuario_cerrados: huRes.count || 0 };
     });
+
+    // -------------------  FASE DE MERGE  ---------------------------
+    // Tras cancelar, buscar los bloques adyacentes al hueco dejado por la
+    // reunión. Si ambos lados pertenecen a la MISMA actividad (no reunión),
+    // fusionarlos en un solo bloque contiguo que preserve el total de minutos.
+    // ----------------------------------------------------------------
+    let mergeOcurrio = false;
+    let refFecha = fechaStr;
+
+    if (uid && blocksToCancel && blocksToCancel.length > 0) {
+      try {
+        let corteFecha = null;
+        let corteMin = null;
+
+        for (const block of blocksToCancel) {
+          const fecha = String(block.fecha).slice(0, 10);
+          const hi = Number(block.hi);
+          const hf = Number(block.hf);
+
+          const antes = await prisma.$queryRawUnsafe(
+            `SELECT hu.id, hu.actividad_id,
+                    EXTRACT(EPOCH FROM hu.hora_inicio::time)/60 AS bi,
+                    EXTRACT(EPOCH FROM hu.hora_fin::time)/60 AS bf,
+                    a.bloqueada
+             FROM horario_usuario hu
+             JOIN actividades a ON a.id = hu.actividad_id AND a.bloqueada = false
+             WHERE hu.usuario_id = $1
+               AND hu.fecha = $2::date
+               AND hu.estado = true
+               AND EXTRACT(EPOCH FROM hu.hora_fin::time)/60 = $3
+             ORDER BY hu.hora_inicio DESC
+             LIMIT 1`,
+            uid, fecha, hi,
+          );
+
+          const despues = await prisma.$queryRawUnsafe(
+            `SELECT hu.id, hu.actividad_id,
+                    EXTRACT(EPOCH FROM hu.hora_inicio::time)/60 AS bi,
+                    EXTRACT(EPOCH FROM hu.hora_fin::time)/60 AS bf,
+                    a.bloqueada
+             FROM horario_usuario hu
+             JOIN actividades a ON a.id = hu.actividad_id AND a.bloqueada = false
+             WHERE hu.usuario_id = $1
+               AND hu.fecha = $2::date
+               AND hu.estado = true
+               AND EXTRACT(EPOCH FROM hu.hora_inicio::time)/60 = $3
+             ORDER BY hu.hora_inicio ASC
+             LIMIT 1`,
+            uid, fecha, hf,
+          );
+
+          const bAntes = antes?.[0];
+          const bDespues = despues?.[0];
+
+          if (
+            bAntes && bDespues &&
+            Number(bAntes.actividad_id) === Number(bDespues.actividad_id) &&
+            !bAntes.bloqueada
+          ) {
+            const aidMerge = Number(bAntes.actividad_id);
+            const antesBi = Number(bAntes.bi);
+            const despuesBf = Number(bDespues.bf);
+            const totalLen = despuesBf - antesBi;
+            const fmtMin = (m) =>
+              `${Math.floor(m / 60).toString().padStart(2, "0")}:${(m % 60).toString().padStart(2, "0")}:00`;
+
+            await prisma.$transaction(async (tx) => {
+              await tx.horario_usuario.update({
+                where: { id: Number(bAntes.id) },
+                data: { estado: false, updated_at: new Date() },
+              });
+              await tx.horario_usuario.update({
+                where: { id: Number(bDespues.id) },
+                data: { estado: false, updated_at: new Date() },
+              });
+              await tx.horario_usuario.create({
+                data: {
+                  actividad_id: aidMerge,
+                  usuario_id: uid,
+                  fecha: new Date(fecha),
+                  hora_inicio: hmsToLocalDate(fmtMin(antesBi)),
+                  hora_fin: hmsToLocalDate(fmtMin(despuesBf)),
+                  estado: true,
+                  duracion_minutos: totalLen,
+                  created_at: new Date(),
+                  updated_at: new Date(),
+                },
+              });
+            });
+
+            console.log(
+              `[eliminarReunion] merge OK: act ${aidMerge}, ${fecha} ` +
+              `${fmtMin(antesBi)}-${fmtMin(despuesBf)} (${totalLen} min, slot completo)`
+            );
+            mergeOcurrio = true;
+            corteFecha = fecha;
+            corteMin = despuesBf;
+          } else {
+            if (bAntes && bDespues) {
+              console.log(
+                `[eliminarReunion] merge SKIP: antes_act=${bAntes.actividad_id} ` +
+                `despues_act=${bDespues.actividad_id} bloqueada=${bAntes.bloqueada}`
+              );
+            } else {
+              console.log(
+                `[eliminarReunion] merge SKIP: antes=${!!bAntes} despues=${!!bDespues}`
+              );
+            }
+            const candF = fecha;
+            const candM = hf;
+            if (
+              corteFecha === null ||
+              candF > corteFecha ||
+              (candF === corteFecha && candM > corteMin)
+            ) {
+              corteFecha = candF;
+              corteMin = candM;
+            }
+          }
+        }
+
+        if (corteFecha != null && corteMin != null) {
+          const affected = await prisma.$executeRawUnsafe(
+            `UPDATE horario_usuario
+               SET estado = false, updated_at = $4
+             WHERE usuario_id = $1
+               AND estado = true
+               AND (fecha > $2::date
+                    OR (fecha = $2::date
+                        AND EXTRACT(EPOCH FROM hora_inicio::time)/60 >= $3))
+               AND (tipo IS NULL OR tipo <> 'reunion')
+               AND actividad_id NOT IN (
+                 SELECT id FROM actividades WHERE bloqueada = true
+               )`,
+            uid, corteFecha, corteMin, new Date(),
+          );
+          console.log(
+            `[eliminarReunion] deshabilitados ${affected ?? 0} bloques (corte=${corteFecha} ${corteMin}min)`,
+          );
+          refFecha = corteFecha;
+        }
+      } catch (e) {
+        console.error("[eliminarReunion] merge/UPDATE error:", e?.message || e);
+      }
+    }
+
+    // Rebalance siempre, incluso si la actividad no tenía bloques activos
+    if (uid && refFecha) {
+      try {
+        console.log(
+          `[eliminarReunion] rebalance desde ${refFecha} (merge=${mergeOcurrio})`
+        );
+        await this.rebalanceUsuario(uid, refFecha, {
+          ignorarActividadId: id,
+          motivo: "Re-balance post-cancelación" + (mergeOcurrio ? " (merge)" : ""),
+          fillFreeSlots: false,
+        });
+      } catch (e) {
+        console.error("[eliminarReunion] rebalance error:", e?.message || e);
+      }
+    }
+
+    return result;
   }
 }
 

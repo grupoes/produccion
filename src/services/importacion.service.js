@@ -6,8 +6,11 @@ const PRIORIDADES = ["ALTA", "MEDIA", "BAJA"];
 const ROL_VALORADOR_ID = 10;
 
 const POTENCIAL_COLOR_PALETTE = [
-  "#dc3545", "#f59e0b", "#3b82f6",
-  "#10b981", "#8b5cf6", "#0ea5e9",
+  "#dc3545", "#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#0ea5e9",
+  "#ef4444", "#f97316", "#06b6d4", "#84cc16", "#d946ef", "#14b8a6",
+  "#eab308", "#6366f1", "#ec4899", "#22c55e", "#a855f7", "#f43f5e",
+  "#0d9488", "#7c3aed", "#ca8a04", "#0284c7", "#dc2626", "#65a30d",
+  "#c026d3", "#0891b2", "#d97706", "#4f46e5", "#be123c", "#059669",
 ];
 const pickRandomColor = () =>
   POTENCIAL_COLOR_PALETTE[Math.floor(Math.random() * POTENCIAL_COLOR_PALETTE.length)];

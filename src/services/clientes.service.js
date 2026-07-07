@@ -11,12 +11,11 @@ const ROL_AUX_PROD = "auxiliar de produccion";
 const ROL_JEFA_VENTAS = "jefa de ventas";
 
 const POTENCIAL_COLOR_PALETTE = [
-  "#dc3545",
-  "#f59e0b",
-  "#3b82f6",
-  "#10b981",
-  "#8b5cf6",
-  "#0ea5e9",
+  "#dc3545", "#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#0ea5e9",
+  "#ef4444", "#f97316", "#06b6d4", "#84cc16", "#d946ef", "#14b8a6",
+  "#eab308", "#6366f1", "#ec4899", "#22c55e", "#a855f7", "#f43f5e",
+  "#0d9488", "#7c3aed", "#ca8a04", "#0284c7", "#dc2626", "#65a30d",
+  "#c026d3", "#0891b2", "#d97706", "#4f46e5", "#be123c", "#059669",
 ];
 const pickRandomColor = () =>
   POTENCIAL_COLOR_PALETTE[
@@ -324,23 +323,31 @@ class ClientesService {
 
         const horaFinDate = new Date(horaIniDate.getTime() + minutos * 60_000);
 
-        // Validaciones: feriado, cumpleaños, jornada.
-        // Si la tarea es REUNIÓN, las saltamos (no se pinta en calendario).
-        if (!reunionTipo) {
-          try {
-            await potencialesClientesService.validarDiaAsignacion(
-              usuarioAsig,
-              fechaAsig,
-              minutos,
-              { skipBloqueChecks: true },
-            );
-          } catch (validationErr) {
-            const e = new Error(
-              `Actividad #${idx + 1}: ${validationErr.message}`,
-            );
-            e.code = validationErr.code || "BAD_REQUEST";
-            throw e;
-          }
+        // Validaciones: feriado, cumpleaños y jornada.
+        // - Feriado/cumpleaños: SIEMPRE se validan (incluso para reuniones),
+        //   porque son bloqueos del calendario a nivel de DÍA.
+        // - Bloque de jornada: se valida con skipBloqueChecks para
+        //   reuniones (el scheduler las reasigna a un hueco real) y sin
+        //   skip para actividades normales (el front elige hora manualmente).
+        //   Si el prospecto tiene fecha_entrega, se suman los bloques
+        //   disponibles desde fechaAsig hasta fecha_entrega para soportar
+        //   actividades que se parten entre varios días.
+        try {
+          await potencialesClientesService.validarDiaAsignacion(
+            usuarioAsig,
+            fechaAsig,
+            minutos,
+            {
+              skipBloqueChecks: !!reunionTipo,
+              fechaLimite: prospecto.fecha_entrega || null,
+            },
+          );
+        } catch (validationErr) {
+          const e = new Error(
+            `Actividad #${idx + 1}: ${validationErr.message}`,
+          );
+          e.code = validationErr.code || "BAD_REQUEST";
+          throw e;
         }
 
         // Conflictos de slot. Solo relevante si NO es reunión.
@@ -405,6 +412,7 @@ class ClientesService {
               duracionMinutos: minutos,
               tipo: "actividad",
               categoria: "cliente",
+              fechaLimite: prospecto.fecha_entrega || null,
             },
           );
         }

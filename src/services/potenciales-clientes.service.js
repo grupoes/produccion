@@ -40,12 +40,11 @@ const POTENCIAL_AUTO_ASSIGN_MODE =
 // Misma paleta que mostraba el color-picker antes para mantener
 // consistencia visual en el calendario.
 const POTENCIAL_COLOR_PALETTE = [
-  "#dc3545", // rojo
-  "#f59e0b", // naranja
-  "#3b82f6", // azul
-  "#10b981", // verde
-  "#8b5cf6", // violeta
-  "#0ea5e9", // celeste
+  "#dc3545", "#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#0ea5e9",
+  "#ef4444", "#f97316", "#06b6d4", "#84cc16", "#d946ef", "#14b8a6",
+  "#eab308", "#6366f1", "#ec4899", "#22c55e", "#a855f7", "#f43f5e",
+  "#0d9488", "#7c3aed", "#ca8a04", "#0284c7", "#dc2626", "#65a30d",
+  "#c026d3", "#0891b2", "#d97706", "#4f46e5", "#be123c", "#059669",
 ];
 const pickRandomColor = () =>
   POTENCIAL_COLOR_PALETTE[
@@ -1908,12 +1907,14 @@ class PotencialesClientesService {
     // una por cada sub-bloque, todas con el mismo `actividad_id`.
     // Si el usuario no tiene jornada, cae al fallback de 1 sola fila
     // (hora_inicio → hora_inicio + duracion) para no perder la actividad.
+    const fechaLimite = p.fechaLimite || null;
     const segments = await this.#distributeAcrossJornada(
       tx,
       usuarioId,
       fecha,
       horaInicio,
       duracionTotal,
+      fechaLimite,
     );
 
     const baseData = {
@@ -1944,6 +1945,7 @@ class PotencialesClientesService {
     }
 
     const created = [];
+    let totalPlaced = 0;
     for (const seg of segments) {
       const row = await tx.horario_usuario.create({
         data: {
@@ -1955,6 +1957,15 @@ class PotencialesClientesService {
         },
       });
       created.push(row);
+      totalPlaced += seg.duracionMinutos;
+    }
+    if (fechaLimite && totalPlaced < duracionTotal) {
+      const falta = duracionTotal - totalPlaced;
+      const e = new Error(
+        `No se puede programar: el usuario no tiene suficiente tiempo disponible entre la fecha de inicio y la fecha de entrega (se requieren ${duracionTotal} min, disponibles ${totalPlaced} min, faltan ${falta} min antes del plazo). Cambia de auxiliar.`,
+      );
+      e.code = "BAD_REQUEST";
+      throw e;
     }
     return created;
   }
@@ -1967,7 +1978,7 @@ class PotencialesClientesService {
   // `{ fecha, horaInicio, horaFin, duracionMinutos }` listos para
   // insertar en `horario_usuario`. Si el usuario no tiene jornada para
   // ningún día dentro del rango de búsqueda, devuelve `[]`.
-  async #distributeAcrossJornada(tx, usuarioId, fecha, horaInicio, duracionMinutos) {
+  async #distributeAcrossJornada(tx, usuarioId, fecha, horaInicio, duracionMinutos, fechaLimite = null) {
     const segments = [];
     let restante = duracionMinutos;
 
@@ -1976,6 +1987,16 @@ class PotencialesClientesService {
       fecha.getMonth(),
       fecha.getDate(),
     );
+    // Construir YYYY-MM-DD del deadline usando UTC (la fecha de entrega
+    // suele venir como UTC-midnight de Prisma). Sin esto, en husos al
+    // oeste de UTC (Perú = UTC-5) `new Date("2026-07-11")` se convierte
+    // en 2026-07-10T19:00-05:00 y la comparación falla perdiendo un día.
+    const limitStr = fechaLimite instanceof Date && !isNaN(fechaLimite.getTime())
+      ? `${fechaLimite.getUTCFullYear()}-${String(fechaLimite.getUTCMonth() + 1).padStart(2, "0")}-${String(fechaLimite.getUTCDate()).padStart(2, "0")}`
+      : null;
+    const curStr = () =>
+      `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, "0")}-${String(currentDate.getDate()).padStart(2, "0")}`;
+    if (limitStr && curStr() > limitStr) return segments;
     let isFirstDay = true;
     let firstDayTimeMin =
       horaInicio.getUTCHours() * 60 + horaInicio.getUTCMinutes();
@@ -1983,11 +2004,35 @@ class PotencialesClientesService {
     let dayCount = 0;
 
     while (restante > 0 && dayCount < MAX_DAYS) {
+      // Si el día actual superó la fecha límite, dejar de distribuir.
+      if (limitStr && curStr() > limitStr) break;
       dayCount += 1;
       const diaId = DAY_ID_BY_GETDAY[currentDate.getDay()] || null;
 
       if (!diaId) {
         // Domingo u otro día no modelado: saltar sin consumir tiempo.
+        currentDate.setDate(currentDate.getDate() + 1);
+        isFirstDay = false;
+        continue;
+      }
+
+      // FIX: saltar feriados. Sin esto, una actividad de varias horas
+      // podía repartirse a lo largo de un día feriado (San Pedro y San
+      // Pablo, Fiestas Patrias, etc.). Construimos un Date en UTC-midnight
+      // con los componentes wall-clock del cursor para comparar contra
+      // la columna `feriados.fecha` (que Prisma sirve como UTC midnight).
+      const currentUtcMidnight = new Date(
+        Date.UTC(
+          currentDate.getFullYear(),
+          currentDate.getMonth(),
+          currentDate.getDate(),
+        ),
+      );
+      const esFeriado = await tx.feriados.findFirst({
+        where: { fecha: currentUtcMidnight, estado: true },
+        select: { id: true },
+      });
+      if (esFeriado) {
         currentDate.setDate(currentDate.getDate() + 1);
         isFirstDay = false;
         continue;
@@ -2066,7 +2111,9 @@ class PotencialesClientesService {
     // el último bloque de jornada. Esto representa la parte de la
     // actividad que cae fuera del horario laboral (visible en el
     // calendario) en vez de "comerse" silenciosamente la duración.
-    if (restante > 0 && segments.length > 0) {
+    // Si hay fecha límite y el restante no cupo antes del deadline,
+    // NO se crea el segmento final (se devuelve lo que cupo).
+    if (restante > 0 && segments.length > 0 && !fechaLimite) {
       const last = segments[segments.length - 1];
       const lastEndMin =
         last.horaFin.getUTCHours() * 60 + last.horaFin.getUTCMinutes();
@@ -3222,15 +3269,11 @@ class PotencialesClientesService {
     return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
   }
 
-  // Valida que el día sea agendable: no feriado, no cumpleaños del
-  // usuario, y que haya un bloque de jornada que entre la actividad.
-  // Público: lo reusan otros services (clientes.service.js).
-  async validarDiaAsignacion(usuarioId, fechaLocal, minutos, opts = {}) {
-    // opts.skipBloqueChecks (default false): no abortar si el usuario no
-    //   tiene bloques de jornada o si los bloques son más cortos que la
-    //   actividad. Útil para flujos de "agregar cliente" donde se permite
-    //   programar manualmente fuera del horario laboral.
-    const { skipBloqueChecks = false } = opts;
+  // Valida que la fecha NO esté bloqueada por feriado o cumpleaños del
+  // usuario. Independiente del bloque de jornada — esto se chequea SIEMPRE
+  // (incluso para reuniones, porque el scheduler las reasigna a un hueco
+  // real pero igual no debe aceptar un día feriado o el cumple del usuario).
+  async #validarFechaNoBloqueadaPorUsuario(usuarioId, fechaLocal) {
     // (1) Feriado
     const feriado = await prisma.feriados.findFirst({
       where: { fecha: fechaLocal, estado: true },
@@ -3243,7 +3286,10 @@ class PotencialesClientesService {
       e.code = "BAD_REQUEST";
       throw e;
     }
-    // (2) Cumpleaños
+    // (2) Cumpleaños del usuario (match mes/día, ignora año).
+    // FIX QUIRÚRGICO TZ: leer con getUTC* porque fecha_nacimiento viene
+    // como Date UTC midnight desde BD; getDate()/getMonth() local
+    // puede caer en el día anterior en servidores TZ!=UTC.
     const usuarioFull = await prisma.usuarios.findUnique({
       where: { id: usuarioId },
       select: { personas: { select: { fecha_nacimiento: true } } },
@@ -3253,8 +3299,8 @@ class PotencialesClientesService {
       const fnDate = fnac instanceof Date ? fnac : new Date(fnac);
       if (
         !Number.isNaN(fnDate.getTime()) &&
-        fnDate.getDate() === fechaLocal.getDate() &&
-        fnDate.getMonth() === fechaLocal.getMonth()
+        fnDate.getUTCDate() === fechaLocal.getDate() &&
+        fnDate.getUTCMonth() === fechaLocal.getMonth()
       ) {
         const e = new Error(
           "No se puede asignar tareas el día del cumpleaños del usuario.",
@@ -3263,51 +3309,145 @@ class PotencialesClientesService {
         throw e;
       }
     }
-    // (3) Bloque de horario
-    // FIX QUIRÚRGICO Timetz: raw SQL con to_char(hora_::time, 'HH24:MI:SS')
-    // para leer las horas wall-clock y evitar el desfase de Prisma en
-    // servers con TZ != UTC (ver #findFreeSlotInSchedule). OJO: hay que
-    // castear a time (sin zona) — no existe to_char(timetz, text).
-    const diaId = DAY_ID_BY_GETDAY[fechaLocal.getDay()] || null;
-    if (diaId) {
-      const bloques = await prisma.$queryRawUnsafe(
-        `SELECT to_char(hora_inicio::time, 'HH24:MI:SS') AS hi,
-                to_char(hora_fin::time,    'HH24:MI:SS') AS hf
-           FROM horario_jornada_detalle
-          WHERE usuario_id = $1
-            AND dia_semana = $2
-            AND estado = true
-            AND hora_inicio IS NOT NULL
-            AND hora_fin IS NOT NULL`,
-        usuarioId,
-        diaId,
-      );
-      let entraEnBloque = false;
-      for (const b of bloques) {
-        const ini = toMinFromHms(b.hi);
-        const fin = toMinFromHms(b.hf);
-        if (ini == null || fin == null) continue;
-        if (fin - ini >= minutos) {
-          entraEnBloque = true;
-          break;
+  }
+
+  // Calcula los minutos de jornada disponibles para un usuario entre dos
+  // fechas (inclusive). Por cada día laborable suma los bloques definidos,
+  // EXCLUYENDO los días marcados como feriado en la tabla `feriados`
+  // (estado=true). Útil para validar si una actividad larga cabe al
+  // partirse entre varios días respetando la fecha_entrega del prospecto.
+  // Devuelve { minutos, diasContados, feriadosEnRango }.
+  //
+  // FIX QUIRÚRGICO TZ: normalizamos a día LOCAL usando los componentes
+  // del Date (getFullYear/Month/Date) en lugar de setHours(0,0,0,0).
+  // Si `fechaFin` viene de Prisma como UTC midnight, setHours local la
+  // desplaza al día anterior y se pierde el último día del rango.
+  async #calcularMinutosJornada(usuarioId, fechaIni, fechaFin) {
+    if (!(fechaIni instanceof Date) || !(fechaFin instanceof Date)) {
+      return { minutos: 0, diasContados: 0, feriadosEnRango: 0 };
+    }
+    // FIX QUIRÚRGICO TZ: usar getUTC* para extraer el día wall-clock del
+    // Date original. Si vino como UTC midnight (lectura de Prisma de un
+    // campo DATE), getDate() local puede caer en el día anterior en
+    // servidores con TZ!=UTC y se pierde el último día del rango.
+    const ini = new Date(
+      fechaIni.getUTCFullYear(),
+      fechaIni.getUTCMonth(),
+      fechaIni.getUTCDate(),
+    );
+    const fin = new Date(
+      fechaFin.getUTCFullYear(),
+      fechaFin.getUTCMonth(),
+      fechaFin.getUTCDate(),
+    );
+    if (fin < ini) return { minutos: 0, diasContados: 0, feriadosEnRango: 0 };
+    // Traer todos los feriados del rango de una sola vez.
+    const feriadosRows = await prisma.feriados.findMany({
+      where: {
+        estado: true,
+        fecha: { gte: ini, lte: fin },
+      },
+      select: { fecha: true },
+    });
+    const feriadosSet = new Set(
+      feriadosRows.map((f) => {
+        const d = f.fecha instanceof Date ? f.fecha : new Date(f.fecha);
+        // FIX QUIRÚRGICO TZ: usar getUTC* para mantener el día wall-clock
+        // que se guardó en BD. Si la columna es DATE, Prisma devuelve UTC
+        // midnight y getDate() local cae en el día anterior en servidores
+        // con TZ!=UTC.
+        return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+      }),
+    );
+    let totalMinutos = 0;
+    let diasContados = 0;
+    let feriadosEnRango = feriadosSet.size;
+    const cursor = new Date(ini);
+    while (cursor <= fin) {
+      const key = `${cursor.getFullYear()}-${cursor.getMonth()}-${cursor.getDate()}`;
+      if (!feriadosSet.has(key)) {
+        const diaId = DAY_ID_BY_GETDAY[cursor.getDay()] || null;
+        if (diaId) {
+          const bloques = await prisma.$queryRawUnsafe(
+            `SELECT to_char(hora_inicio::time, 'HH24:MI:SS') AS hi,
+                    to_char(hora_fin::time,    'HH24:MI:SS') AS hf
+               FROM horario_jornada_detalle
+              WHERE usuario_id = $1
+                AND dia_semana = $2
+                AND estado = true
+                AND hora_inicio IS NOT NULL
+                AND hora_fin IS NOT NULL`,
+            usuarioId,
+            diaId,
+          );
+          for (const b of bloques) {
+            const i = toMinFromHms(b.hi);
+            const f = toMinFromHms(b.hf);
+            if (i == null || f == null) continue;
+            totalMinutos += f - i;
+            diasContados += 1;
+          }
         }
       }
-      if (bloques.length > 0 && !entraEnBloque) {
-        if (skipBloqueChecks) return;
-        const e = new Error(
-          "El usuario no tiene un bloque de horario lo suficientemente largo para la tarea seleccionada.",
-        );
-        e.code = "BAD_REQUEST";
-        throw e;
-      }
-      if (bloques.length === 0) {
-        if (skipBloqueChecks) return;
-        const e = new Error(
-          "El usuario no tiene horario registrado para el día seleccionado.",
-        );
-        e.code = "BAD_REQUEST";
-        throw e;
-      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return { minutos: totalMinutos, diasContados, feriadosEnRango };
+  }
+
+  // Valida que el día sea agendable: no feriado, no cumpleaños del
+  // usuario, y que haya un bloque de jornada que entre la actividad.
+  // Público: lo reusan otros services (clientes.service.js).
+  async validarDiaAsignacion(usuarioId, fechaLocal, minutos, opts = {}) {
+    // opts.skipBloqueChecks (default false): no abortar si el usuario no
+    //   tiene bloques de jornada o si los bloques son más cortos que la
+    //   actividad. Útil para flujos de "agregar cliente" donde se permite
+    //   programar manualmente fuera del horario laboral.
+    // opts.skipDateChecks (default false): no validar feriado ni cumpleaños.
+    //   Reservado para flujos donde la fecha ya viene validada de antemano.
+    // opts.fechaLimite (Date | null): si se pasa, la validación de bloque
+    //   suma los minutos disponibles desde fechaLocal hasta fechaLimite
+    //   (inclusive), excluyendo feriados. Permite programar actividades
+    //   que se parten entre varios días respetando la fecha de entrega.
+    const {
+      skipBloqueChecks = false,
+      skipDateChecks = false,
+      fechaLimite = null,
+    } = opts;
+    if (!skipDateChecks) {
+      await this.#validarFechaNoBloqueadaPorUsuario(usuarioId, fechaLocal);
+    }
+    // Validar deadline — si la fecha supera la fecha de entrega, rechazar.
+    if (fechaLimite && fechaLocal > fechaLimite) {
+      const e = new Error(
+        `No se puede programar: la fecha supera la fecha de entrega. Cambia de auxiliar.`,
+      );
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+    // (3) Bloque de horario
+    const fechaFinRango = fechaLimite || fechaLocal;
+    const { minutos: totalDisponible, diasContados } =
+      await this.#calcularMinutosJornada(usuarioId, fechaLocal, fechaFinRango);
+    // Si el usuario no tiene bloques en NINGÚN día del rango, rechazar.
+    if (diasContados === 0) {
+      if (skipBloqueChecks) return;
+      const e = new Error(
+        fechaLimite && fechaLimite > fechaLocal
+          ? "El usuario no tiene horario registrado entre la fecha de inicio y la fecha de entrega."
+          : "El usuario no tiene horario registrado para el día seleccionado.",
+      );
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+    if (totalDisponible < minutos) {
+      if (skipBloqueChecks) return;
+      const msg =
+        fechaLimite && fechaLimite > fechaLocal
+          ? `El usuario no tiene suficiente tiempo en su jornada entre la fecha de inicio y la fecha de entrega para la tarea seleccionada (disponible: ${totalDisponible} min, requerido: ${minutos} min).`
+          : `El usuario no tiene suficiente tiempo en su jornada del día para la tarea seleccionada (disponible: ${totalDisponible} min, requerido: ${minutos} min).`;
+      const e = new Error(msg);
+      e.code = "BAD_REQUEST";
+      throw e;
     }
   }
 

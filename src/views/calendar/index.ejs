@@ -453,6 +453,15 @@
           </button>
           <button
             type="button"
+            class="btn btn-outline-primary btn-sm d-none"
+            id="js-cal-btn-ajustar-duracion"
+            data-actividad-id=""
+          >
+            <i class="ti ti-clock-edit me-1"></i>
+            Ajustar duración
+          </button>
+          <button
+            type="button"
             class="btn btn-outline-info btn-sm d-none"
             id="js-cal-btn-reasignar"
             data-actividad-id=""
@@ -549,6 +558,72 @@
           Cancelar
         </button>
         <button type="button" class="btn btn-primary" id="js-cal-rep-aplicar">
+          <i class="ti ti-save me-1"></i>
+          Aplicar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
+     Modal: Ajustar duración (mismo día, corre actividades posteriores)
+     ================================================================ -->
+<div
+  class="modal fade"
+  id="js-cal-ajustar-duracion-modal"
+  tabindex="-1"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Ajustar duración</h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+          aria-label="Close"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <form id="js-cal-ajustar-duracion-form" autocomplete="off">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">Duración actual</label>
+              <input
+                type="text"
+                class="form-control"
+                id="js-cal-ajd-actual"
+                readonly
+              />
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Nueva duración (minutos)</label>
+              <input
+                type="number"
+                min="5"
+                step="5"
+                class="form-control"
+                id="js-cal-ajd-nueva"
+                required
+              />
+            </div>
+            <div class="col-12">
+              <div class="alert alert-info mb-0 py-2 fs-sm" role="alert">
+                <i class="ti ti-info-circle me-1"></i>
+                Al cambiar la duración, las actividades <strong>no reunión</strong> posteriores se correrán automáticamente. Las reuniones fijas no se mueven.
+              </div>
+            </div>
+          </div>
+        </form>
+        <div id="js-cal-ajd-result" class="mt-3"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">
+          Cancelar
+        </button>
+        <button type="button" class="btn btn-primary" id="js-cal-ajd-aplicar">
           <i class="ti ti-save me-1"></i>
           Aplicar
         </button>
@@ -972,13 +1047,19 @@
               </div>
 
               <div class="col-md-6">
-                <label class="form-label">Universidad</label>
+                <label class="form-label">
+                  Universidad
+                  <i class="ti ti-plus text-primary fs-6 cursor-pointer ms-1" id="js-ac-add-universidad" title="Agregar universidad" style="cursor:pointer"></i>
+                </label>
                 <select class="form-select" id="js-ac-institucion">
                   <option value="">— Seleccione —</option>
                 </select>
               </div>
               <div class="col-md-6">
-                <label class="form-label">Carrera</label>
+                <label class="form-label">
+                  Carrera
+                  <i class="ti ti-plus text-primary fs-6 cursor-pointer ms-1" id="js-ac-add-carrera" title="Agregar carrera" style="cursor:pointer"></i>
+                </label>
                 <select class="form-select" id="js-ac-carrera" disabled>
                   <option value="">Seleccione universidad primero</option>
                 </select>

@@ -1,0 +1,29 @@
+node_modules
+npm-debug.log*
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+.vscode
+.idea
+*.md
+README.md
+LICENSE
+.DS_Store
+Thumbs.db
+
+# Tests, debug y scripts
+scripts/
+coverage/
+.nyc_output
+*.test.js
+*.spec.js
+
+# Logs
+logs/
+*.log
+
+# Archivos de desarrollo
+tmp/
+temp/

@@ -31,6 +31,11 @@ router.patch("/reuniones/:id", reunionesAsistenteController.reprogramar);
 //   body: { nuevo_usuario_id, fecha?, hora_inicio?, duracion_minutos?, motivo? }
 router.patch("/reuniones/:id/reasignar", reunionesAsistenteController.reasignar);
 
+// Ajustar duración (solo cambia la duración, corre actividades posteriores).
+//   PATCH /api/calendario-asistente/reuniones/:id/ajustar-duracion
+//   body: { duracion_minutos }
+router.patch("/reuniones/:id/ajustar-duracion", reunionesAsistenteController.ajustarDuracion);
+
 // Programar por PRIMERA vez una reunión legacy (sin horario_usuario).
 // La distingue del PATCH normal porque crea el slot en vez de moverlo.
 //   POST /api/calendario-asistente/reuniones/:id/programar

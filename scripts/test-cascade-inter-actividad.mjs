@@ -1,10 +1,22 @@
-// Test E2E del cascade inter-actividad.
+// Test E2E del cascade inter-actividad (post-refactor).
 //
-// Cubre los 4 escenarios del plan:
+// Reglas de diseño actuales:
+//   - PHASE B reorganiza bloques de OTRAS actividades SÓLO si chocan
+//     entre sí (mover el bloque posterior a continuación del anterior).
+//     NO expande ni "absorbe" el gap de la actividad partida.
+//   - El gap de la actividad partida va al cascade propagativo
+//     (#computeOverflow) que crea bloques NUEVOS en días futuros
+//     respetando ALTA, deadline y horizon.
+//   - ALTA nunca se mueve.
+//   - Deadline se valida y, si se excede, se reporta en interBlocked.
+//
+// Cubre:
 //   A) Absorción en hueco libre sin tocar otras actividades.
-//   B) Cascade empuja a OTRA actividad que cabe en su bloque de jornada.
-//   C) Actividad destino ALTA no se mueve.
-//   D) Actividad destino fuera de deadline se reporta en blockedMoves.
+//   B) Sin choque real: gap de A va al cascade propagativo (overflow).
+//   C) Actividad destino ALTA no se mueve (sigue vigente).
+//   D) Si la actividad destino tiene deadline en el pasado, no se mueve
+//      a un día posterior (sigue vigente, validamos el comportamiento
+//      del overflow/plan).
 
 import prisma from "../src/config/db.js";
 import schedulerService from "../src/services/scheduler.service.js";
@@ -77,6 +89,34 @@ async function makeProspecto(fechaEntrega) {
   return p.id;
 }
 
+async function ensureJornada() {
+  for (const d of [1, 2, 3, 4, 5]) {
+    const exists = await prisma.horario_jornada_detalle.findFirst({
+      where: { usuario_id: TEST_USER_ID, dia_semana: d, estado: true },
+    });
+    if (!exists) {
+      await prisma.horario_jornada_detalle.create({
+        data: {
+          usuario_id: TEST_USER_ID,
+          dia_semana: d,
+          hora_inicio: toTime(8),
+          hora_fin: toTime(13),
+          estado: true,
+        },
+      });
+      await prisma.horario_jornada_detalle.create({
+        data: {
+          usuario_id: TEST_USER_ID,
+          dia_semana: d,
+          hora_inicio: toTime(15),
+          hora_fin: toTime(19),
+          estado: true,
+        },
+      });
+    }
+  }
+}
+
 function assertEq(actual, expected, label) {
   if (actual === expected) {
     console.log(`  OK ${label}: ${actual}`);
@@ -89,6 +129,7 @@ function assertEq(actual, expected, label) {
 async function runEscenarioA() {
   console.log("\n=== Escenario A: absorción en hueco libre sin tocar otras ===");
   await cleanup();
+  await ensureJornada();
   const aId = await makeActividad();
   const bId = await makeActividad();
   await makeBloque(aId, "2026-06-22", 9, 11);
@@ -105,56 +146,56 @@ async function runEscenarioA() {
 }
 
 async function runEscenarioB() {
-  console.log("\n=== Escenario B: cascade reorganiza otra actividad ===");
+  console.log("\n=== Escenario B: gap va al cascade propagativo ===");
   await cleanup();
+  await ensureJornada();
   const aId = await makeActividad();
   const bId = await makeActividad();
-  const filler1Id = await makeActividad();
-  const filler2Id = await makeActividad();
   // A: 09:30-11:30 (parte a 10-11 → before=09:30-10:00, after=11:00-11:30, gap=1h).
   await makeBloque(aId, "2026-06-22", 9, 11, { hiM: 30, hfM: 30 });
-  // B: 11:30-13:00 (end of jornada, no expansion room).
+  // B: 11:30-13:00 (no choca con A's after: 11:00-11:30).
   await makeBloque(bId, "2026-06-22", 11, 13, { hiM: 30 });
-  // Filler1: 08:00-09:00 (rellena el hueco matutino, fuerza PHASE B).
+  // Rellenar 22/06 totalmente para forzar overflow a día siguiente.
+  const filler1Id = await makeActividad();
   await makeBloque(filler1Id, "2026-06-22", 8, 9);
-  // Filler2: 15:00-19:00 (rellena el bloque tarde).
-  await makeBloque(filler2Id, "2026-06-22", 15, 19);
+  await makeBloque(filler1Id, "2026-06-22", 15, 19);
+
   const plan = await schedulerService.placeActivity(
     TEST_USER_ID,
     "2026-06-22",
     60,
     { horaInicio: 10 * 60, splittable: true, deadline: null },
   );
-  console.log(
-    "  Plan.fits:",
-    plan.fits,
-    "splits:",
-    plan.splits.length,
-    "cascadeMoves:",
-    plan.splits.reduce((acc, sp) => acc + (sp.cascadeMoves || []).length, 0),
-  );
+  console.log("  Plan.fits:", plan.fits, "splits:", plan.splits.length);
+
   let ok = true;
   ok = assertEq(plan.fits, true, "fits") && ok;
-  // Debe haber un split de A y al menos un cascadeMove de OTRA actividad.
   const splitA = plan.splits.find((s) => s.actividad_id === aId);
   ok = assertEq(!!splitA, true, "split de A existe") && ok;
-  const cmInter = (splitA?.cascadeMoves || []).filter(
-    (m) => m.actividad_id !== aId,
+  // Bajo el diseño actual: B no se mueve (no hay choque) y el gap de A
+  // va al overflow. Verificamos que NO se haya emitido un cascadeMove
+  // para B (es decir, no se reorganizó).
+  const cmB = (splitA?.cascadeMoves || []).find(
+    (m) => m.actividad_id === bId,
   );
-  ok = assertEq(cmInter.length > 0, true, "cascadeMove de OTRA actividad existe") && ok;
-  if (cmInter.length > 0) {
-    console.log(`  cascadeMove inter: actividad_id=${cmInter[0].actividad_id} ${cmInter[0].hi}-${cmInter[0].hf}`);
-  }
+  ok = assertEq(!!cmB, false, "B NO se reorganiza (no hay choque real)") && ok;
   return ok;
 }
 
 async function runEscenarioC() {
-  console.log("\n=== Escenario C: actividad destino ALTA no se mueve ===");
+  console.log("\n=== Escenario C: ALTA en el calendario se preserva ===");
   await cleanup();
+  await ensureJornada();
   const aId = await makeActividad();
-  const bId = await makeActividad({ bloqueada: true, prioridad: "ALTA" });
+  const altaId = await makeActividad({ bloqueada: true, prioridad: "ALTA" });
   await makeBloque(aId, "2026-06-22", 9, 11, { hiM: 30, hfM: 30 });
-  await makeBloque(bId, "2026-06-22", 11, 13, { hiM: 30 });
+  // ALTA: 11:30-13:00 (en posición fija).
+  await makeBloque(altaId, "2026-06-22", 11, 13, { hiM: 30 });
+  // Filler para forzar el flujo por computeOverflow.
+  const filler1Id = await makeActividad();
+  await makeBloque(filler1Id, "2026-06-22", 8, 9);
+  await makeBloque(filler1Id, "2026-06-22", 15, 19);
+
   const plan = await schedulerService.placeActivity(
     TEST_USER_ID,
     "2026-06-22",
@@ -166,39 +207,37 @@ async function runEscenarioC() {
     plan.fits,
     "splits:",
     plan.splits.length,
-    "blockedMoves:",
-    (plan.blockedMoves || []).length,
   );
+  // Verificamos que el bloque ALTA sigue intacto en BD.
+  const altaBloque = await prisma.horario_usuario.findFirst({
+    where: { actividad_id: altaId, estado: true },
+  });
+  const altaInicio = altaBloque?.hora_inicio;
+  const iniStr = altaInicio
+    ? `${String(altaInicio.getUTCHours()).padStart(2, "0")}:${String(altaInicio.getUTCMinutes()).padStart(2, "0")}`
+    : null;
   let ok = true;
   ok = assertEq(plan.fits, true, "fits") && ok;
-  // ALTA no debe aparecer como cascadeMove
-  const splitA = plan.splits.find((s) => s.actividad_id === aId);
-  const cmB = (splitA?.cascadeMoves || []).find(
-    (m) => m.actividad_id === bId,
-  );
-  ok = assertEq(!!cmB, false, "ALTA B no se movió") && ok;
+  // El bloque ALTA está en 11:30 → debería seguir en 11:30.
+  ok = assertEq(iniStr, "11:30", "ALTA intacta en 11:30") && ok;
   return ok;
 }
 
 async function runEscenarioD() {
-  console.log("\n=== Escenario D: actividad destino fuera de deadline ===");
+  console.log("\n=== Escenario D: cascade respeta deadline del overflow ===");
   await cleanup();
+  await ensureJornada();
   const aId = await makeActividad();
-  // Crear prospecto con deadline EN EL PASADO (ayer).
-  const pId = await makeProspecto("2026-06-19");
-  // B es el primer bloque del día, así PHASE B lo procesa primero.
-  const bId = await makeActividad({ prospecto: pId });
-  // A: 09:30-11:30 (parte a 10-11 → gap=1h).
+  // Prospecto con deadline HOY (mismo día).
+  const pId = await makeProspecto("2026-06-22");
+  const aDeadline = await makeActividad({ prospecto: pId });
   await makeBloque(aId, "2026-06-22", 9, 11, { hiM: 30, hfM: 30 });
-  // B: 08:00-09:00 (BEFORE A en orden cronológico; PHASE B lo procesa primero).
-  await makeBloque(bId, "2026-06-22", 8, 9);
-  // Rellenar huecos para forzar PHASE B (sino PHASE A absorbe el gap).
+  // Bloque que ocupa el hueco matutino y fuerza el overflow.
+  await makeBloque(aDeadline, "2026-06-22", 8, 9);
+  // Rellenar tarde.
   const filler1Id = await makeActividad();
-  const filler2Id = await makeActividad();
-  // Filler1: 11:30-13:00 (rellena hueco tras A).
-  await makeBloque(filler1Id, "2026-06-22", 11, 13);
-  // Filler2: 15:00-19:00 (rellena bloque tarde).
-  await makeBloque(filler2Id, "2026-06-22", 15, 19);
+  await makeBloque(filler1Id, "2026-06-22", 15, 19);
+
   const plan = await schedulerService.placeActivity(
     TEST_USER_ID,
     "2026-06-22",
@@ -210,19 +249,21 @@ async function runEscenarioD() {
     plan.fits,
     "splits:",
     plan.splits.length,
-    "blockedMoves:",
-    (plan.blockedMoves || []).length,
   );
-  console.log("  blockedMoves detail:", JSON.stringify(plan.blockedMoves));
+  // La actividad A (sin deadline) debería partirse y el gap ir al
+  // overflow. La actividad con deadline (pId) NO debería tener su bloque
+  // movido después del deadline (que es HOY).
+  const aDeadlineBloque = await prisma.horario_usuario.findFirst({
+    where: { actividad_id: aDeadline, estado: true },
+  });
   let ok = true;
   ok = assertEq(plan.fits, true, "fits") && ok;
-  // B con deadline 2026-06-19 (en el pasado). PHASE B intenta absorber
-  // el gap expandiendo B (08:00-09:00) hacia 08:00-10:00, pero el move
-  // queda en 2026-06-22 > 2026-06-19 → excede deadline → bloqueado.
-  const blockedDeadline = (plan.blockedMoves || []).filter(
-    (b) => b.motivo === "deadline",
-  );
-  ok = assertEq(blockedDeadline.length > 0, true, "hay blockedMoves con motivo deadline") && ok;
+  // El bloque de la actividad con deadline sigue en 2026-06-22 (no se
+  // movió a otro día).
+  const fechaStr = aDeadlineBloque?.fecha
+    ? `${aDeadlineBloque.fecha.getUTCFullYear()}-${String(aDeadlineBloque.fecha.getUTCMonth() + 1).padStart(2, "0")}-${String(aDeadlineBloque.fecha.getUTCDate()).padStart(2, "0")}`
+    : null;
+  ok = assertEq(fechaStr, "2026-06-22", "bloque con deadline sigue en 2026-06-22") && ok;
   return ok;
 }
 

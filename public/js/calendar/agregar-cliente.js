@@ -99,6 +99,16 @@
   }
 
   function fillStaticSelects() {
+    // Destruir instancias previas de Choices.js para evitar duplicados
+    // al reentrar al modal.
+    if (state.institucionChoices) {
+      try { state.institucionChoices.destroy(); } catch (_) {}
+      state.institucionChoices = null;
+    }
+    if (state.carreraChoices) {
+      try { state.carreraChoices.destroy(); } catch (_) {}
+      state.carreraChoices = null;
+    }
     const { niveles, instituciones, origenes, tareas } = state.lookups;
 
     const fill = (selId, items, valueKey, labelKey, placeholder) => {
@@ -477,6 +487,7 @@
     // input: a partir de ahí respetamos lo que tipeó aunque cambie el
     // usuario asignado.
     let usuarioTocoHora = !!data.hora_inicio;
+    let usuarioTocoFecha = false;
     if (data.hora_inicio) horaInput.value = data.hora_inicio;
 
     const prioSel = $('[data-f="prioridad"]', node);
@@ -521,8 +532,9 @@
     const applyDefaultsFromUltimoHorario = () => {
       const uid = usuarioSel.value;
       if (!window.asistenteCalApplyFechaHoraDefaults) return;
-      // Si el usuario ya tipeó una hora, respetamos lo que haya puesto.
+      // Si el usuario ya tocó la hora o la fecha, respetamos lo que haya puesto.
       if (usuarioTocoHora) return;
+      if (usuarioTocoFecha) return;
       window.asistenteCalApplyFechaHoraDefaults(uid, fechaInput, horaInput);
     };
 
@@ -587,7 +599,7 @@
     };
 
     fechaInput.addEventListener("change", () => {
-      // invalidar cache sólo para esta fecha no ayuda, pero dejamos recarga fresca
+      usuarioTocoFecha = true;
       loadUsuarios();
     });
     // Cambio manual de usuario: refrescar warning de jornada + aplicar
@@ -665,13 +677,25 @@
     $("#js-ac-contenido").value = "";
     $("#js-ac-fecha-entrega").value = "";
     if (state.institucionChoices) {
+      $("#js-ac-institucion").value = "";
       state.institucionChoices.setValue([""]);
     } else {
       $("#js-ac-institucion").value = "";
     }
     if (state.carreraChoices) {
+      // Forzar reset del <select> nativo ANTES de tocar Choices.js, porque
+      // si la opción placeholder queda `disabled: true`, el `setValue`
+      // posterior puede no limpiar visualmente el display.
+      $("#js-ac-carrera").value = "";
       state.carreraChoices.setChoices(
-        [{ value: "", label: "Seleccione universidad primero", disabled: true }],
+        [
+          {
+            value: "",
+            label: "Seleccione universidad primero",
+            disabled: true,
+            selected: true,
+          },
+        ],
         "value",
         "label",
         true,
@@ -865,8 +889,10 @@
         toast("error", "No se pudieron cargar los catálogos.");
         return;
       }
-      fillStaticSelects();
     }
+    // Refrescar selects cada vez que se muestra el tab para garantizar
+    // que las instancias de Choices.js se creen limpias.
+    fillStaticSelects();
     // Sólo reseteamos una vez por apertura del modal padre para no
     // pisar lo que el usuario está tipeando si vuelve a la pestaña.
     if (!formAlreadyReset) {
@@ -880,9 +906,249 @@
     formAlreadyReset = false;
   }
 
+  async function handleAddUniversidad() {
+    const modal = document.getElementById("standard-modal");
+    if (!modal) return;
+    const modalTitle = modal.querySelector("#standard-modalLabel");
+    const modalBody = modal.querySelector(".modal-body");
+    const btnGuardar = modal.querySelector(".modal-footer .btn-primary");
+    const bsModal = bootstrap.Modal.getOrCreateInstance(modal);
+
+    modalTitle.textContent = "Nueva universidad";
+    modalBody.innerHTML =
+      '<form id="form-institucion" novalidate>' +
+      '<div class="row g-3">' +
+      '<div class="col-md-8">' +
+      '<label class="form-label">Nombre <span class="text-danger">*</span></label>' +
+      '<input type="text" class="form-control" name="nombre" required maxlength="100" />' +
+      "</div>" +
+      '<div class="col-md-4">' +
+      '<label class="form-label">Abreviatura</label>' +
+      '<input type="text" class="form-control" name="abreviatura" maxlength="100" />' +
+      "</div>" +
+      '<div class="col-md-6">' +
+      '<label class="form-label">Tipo <span class="text-danger">*</span></label>' +
+      '<select class="form-select" name="tipo" required>' +
+      '<option value="">Seleccione un tipo</option>' +
+      '<option value="UNIVERSIDAD">UNIVERSIDAD</option>' +
+      '<option value="INSTITUTO">INSTITUTO</option>' +
+      "</select>" +
+      "</div>" +
+      '<div class="col-md-6">' +
+      '<label class="form-label">Sector <span class="text-danger">*</span></label>' +
+      '<select class="form-select" name="sector" required>' +
+      '<option value="">Seleccione un sector</option>' +
+      '<option value="Pública">Pública</option>' +
+      '<option value="Privada">Privada</option>' +
+      "</select>" +
+      "</div>" +
+      "</div>" +
+      "</form>";
+
+    const onGuardar = async () => {
+      const nombre = modalBody.querySelector('[name="nombre"]').value.trim();
+      const abreviatura = modalBody.querySelector('[name="abreviatura"]').value.trim();
+      const tipo = modalBody.querySelector('[name="tipo"]').value;
+      const sector = modalBody.querySelector('[name="sector"]').value;
+      if (!nombre) {
+        toast("error", "El nombre es obligatorio.");
+        modalBody.querySelector('[name="nombre"]').focus();
+        return;
+      }
+      if (!tipo) {
+        toast("error", "Selecciona un tipo.");
+        return;
+      }
+      if (!sector) {
+        toast("error", "Selecciona un sector.");
+        return;
+      }
+      btnGuardar.disabled = true;
+      btnGuardar.textContent = "Guardando...";
+      try {
+        const r = await fetch("/api/universidad", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nombre, abreviatura, tipo, sector }),
+        });
+        const j = await r.json();
+        if (!j.success) {
+          toast("error", j.error || "No se pudo crear la universidad");
+          return;
+        }
+        const nueva = j.data;
+        bsModal.hide();
+        // Refrescar listado y seleccionar la nueva
+        const r2 = await fetch("/api/universidad");
+        const j2 = await r2.json();
+        if (j2.success) {
+          state.lookups.instituciones = j2.data.map((u) => ({
+            id: u.id,
+            nombre: u.nombre,
+            abreviatura: u.abreviatura,
+            carreras: [],
+          }));
+          const instSel = $("#js-ac-institucion");
+          const carrSel = $("#js-ac-carrera");
+          // Actualizar el <select> nativo para que fillStaticSelects tenga
+          // los datos frescos la próxima vez que se muestre el tab.
+          instSel.innerHTML =
+            '<option value="">— Seleccione —</option>' +
+            j2.data
+              .map((u) => `<option value="${u.id}">${esc(u.nombre)}</option>`)
+              .join("");
+          carrSel.innerHTML = '<option value="">Seleccione universidad primero</option>';
+          // Actualizar Choices.js sin destruir/recrear
+          if (state.institucionChoices) {
+            state.institucionChoices.clearChoices();
+            state.institucionChoices.setChoices(
+              [
+                { value: "", label: "— Seleccione —", placeholder: true },
+                ...j2.data.map((u) => ({ value: String(u.id), label: u.nombre })),
+              ],
+              "value",
+              "label",
+              true,
+            );
+            state.institucionChoices.setChoiceByValue(String(nueva.id));
+          }
+          if (state.carreraChoices) {
+            state.carreraChoices.clearChoices();
+            state.carreraChoices.setChoices(
+              [{ value: "", label: "Seleccione universidad primero", disabled: true, selected: true }],
+              "value",
+              "label",
+              true,
+            );
+            state.carreraChoices.disable();
+          }
+        }
+        toast("success", `Universidad "${nombre}" creada`);
+      } catch (_) {
+        toast("error", "Error al crear la universidad");
+      } finally {
+        btnGuardar.disabled = false;
+        btnGuardar.textContent = "Guardar";
+      }
+    };
+
+    btnGuardar.addEventListener("click", onGuardar);
+    modal.addEventListener("hidden.bs.modal", () => {
+      btnGuardar.removeEventListener("click", onGuardar);
+      modal.style.zIndex = "";
+    }, { once: true });
+    // Ajustar z-index para que aparezca encima del modal padre
+    modal.style.zIndex = 1060;
+    modal.addEventListener("shown.bs.modal", () => {
+      const backdrops = document.querySelectorAll(".modal-backdrop");
+      if (backdrops.length > 0) backdrops[backdrops.length - 1].style.zIndex = 1059;
+    }, { once: true });
+    bsModal.show();
+  }
+
+  async function handleAddCarrera() {
+    const instSel = $("#js-ac-institucion");
+    const instId = instSel.value;
+    const instNombre = instSel.options[instSel.selectedIndex]?.text || "";
+    if (!instId) {
+      toast("warning", "Selecciona una universidad primero.");
+      return;
+    }
+    const modal = document.getElementById("standard-modal");
+    if (!modal) return;
+    const modalTitle = modal.querySelector("#standard-modalLabel");
+    const modalBody = modal.querySelector(".modal-body");
+    const btnGuardar = modal.querySelector(".modal-footer .btn-primary");
+    const bsModal = bootstrap.Modal.getOrCreateInstance(modal);
+
+    modalTitle.textContent = "Nueva carrera";
+    modalBody.innerHTML =
+      '<form id="form-carrera" novalidate>' +
+      '<div class="row g-3">' +
+      '<div class="col-12">' +
+      '<label class="form-label">Universidad</label>' +
+      `<input type="text" class="form-control" value="${esc(instNombre)}" disabled />` +
+      "</div>" +
+      '<div class="col-12">' +
+      '<label class="form-label">Nombre <span class="text-danger">*</span></label>' +
+      '<input type="text" class="form-control" name="nombre" required maxlength="100" placeholder="Ej. Ingeniería Civil" />' +
+      "</div>" +
+      "</div>" +
+      "</form>";
+
+    const onGuardar = async () => {
+      const nombre = modalBody.querySelector('[name="nombre"]').value.trim();
+      if (!nombre) {
+        toast("error", "El nombre es obligatorio.");
+        modalBody.querySelector('[name="nombre"]').focus();
+        return;
+      }
+      btnGuardar.disabled = true;
+      btnGuardar.textContent = "Guardando...";
+      try {
+        const r = await fetch("/api/carreras", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nombre, institucion_id: instId }),
+        });
+        const j = await r.json();
+        if (!j.success) {
+          toast("error", j.error || "No se pudo crear la carrera");
+          return;
+        }
+        const nueva = j.data;
+        bsModal.hide();
+        // Refrescar el select de carrera con las carreras de la institución
+        const r2 = await fetch(`/api/potenciales-clientes/carreras?institucion_id=${instId}`);
+        const j2 = await r2.json();
+        if (j2.success) {
+          const carrSel = $("#js-ac-carrera");
+          const carreras = j2.data || [];
+          carrSel.innerHTML =
+            '<option value="">— Seleccione —</option>' +
+            carreras.map((c) => `<option value="${c.id}">${esc(c.nombre)}</option>`).join("");
+          if (state.carreraChoices) {
+            state.carreraChoices.clearChoices();
+            state.carreraChoices.setChoices(
+              [
+                { value: "", label: "— Seleccione —", placeholder: true },
+                ...carreras.map((c) => ({ value: String(c.id), label: c.nombre })),
+              ],
+              "value",
+              "label",
+              true,
+            );
+            state.carreraChoices.setChoiceByValue(String(nueva.id));
+            state.carreraChoices.enable();
+          }
+        }
+        toast("success", `Carrera "${nombre}" creada`);
+      } catch (_) {
+        toast("error", "Error al crear la carrera");
+      } finally {
+        btnGuardar.disabled = false;
+        btnGuardar.textContent = "Guardar";
+      }
+    };
+
+    btnGuardar.addEventListener("click", onGuardar);
+    modal.addEventListener("hidden.bs.modal", () => {
+      btnGuardar.removeEventListener("click", onGuardar);
+      modal.style.zIndex = "";
+    }, { once: true });
+    modal.style.zIndex = 1060;
+    modal.addEventListener("shown.bs.modal", () => {
+      const backdrops = document.querySelectorAll(".modal-backdrop");
+      if (backdrops.length > 0) backdrops[backdrops.length - 1].style.zIndex = 1059;
+    }, { once: true });
+    bsModal.show();
+  }
+
   function init() {
     $("#js-ac-add-contacto")?.addEventListener("click", () => addContacto());
     $("#js-ac-guardar")?.addEventListener("click", submit);
+    $("#js-ac-add-universidad")?.addEventListener("click", handleAddUniversidad);
+    $("#js-ac-add-carrera")?.addEventListener("click", handleAddCarrera);
 
     const tabBtn = $("#js-cal-tab-agregar-cliente-btn");
     if (tabBtn) {
