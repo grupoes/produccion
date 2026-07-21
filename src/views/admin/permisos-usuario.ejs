@@ -1,0 +1,212 @@
+<div class="row">
+  <div class="col-12">
+    <div class="page-title-box">
+      <h4 class="page-title">Permisos de Usuario</h4>
+      <p class="text-muted">
+        Gestiona permisos de usuarios. Al crear un permiso, el sistema
+        reprograma automáticamente las actividades afectadas respetando
+        la fecha de entrega y sin mover actividades urgentes.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <!-- Formulario de nuevo permiso -->
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title mb-3">Nuevo permiso</h5>
+
+        <div class="mb-3">
+          <label for="pu-usuario" class="form-label">Usuario <span class="text-danger">*</span></label>
+          <select id="pu-usuario" class="form-select">
+            <option value="">— Selecciona —</option>
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label for="pu-fecha" class="form-label">Fecha <span class="text-danger">*</span></label>
+          <input type="date" id="pu-fecha" class="form-control" />
+        </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label for="pu-hora-inicio" class="form-label">Hora inicio <span class="text-danger">*</span></label>
+            <input type="time" id="pu-hora-inicio" class="form-control" />
+          </div>
+          <div class="col-6">
+            <label for="pu-hora-fin" class="form-label">Hora fin <span class="text-danger">*</span></label>
+            <input type="time" id="pu-hora-fin" class="form-control" />
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="pu-motivo" class="form-label">Motivo</label>
+          <textarea id="pu-motivo" class="form-control" rows="2" placeholder="Ej: Trámite personal"></textarea>
+        </div>
+
+        <button id="pu-btn-preview" class="btn btn-outline-secondary w-100 mb-2">
+          <i class="ti ti-eye me-1"></i>Vista previa
+        </button>
+        <button id="pu-btn-crear" class="btn btn-danger w-100" disabled>
+          <i class="ti ti-lock me-1"></i>Crear permiso y reprogramar
+        </button>
+      </div>
+    </div>
+
+    <!-- Resultado de vista previa -->
+    <div id="pu-preview-result" class="d-none">
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title mb-3">Actividades afectadas</h5>
+          <div id="pu-preview-content"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Listado de permisos existentes -->
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="card-title mb-0">Permisos registrados</h5>
+          <div class="d-flex gap-2">
+            <select id="pu-filtro-usuario" class="form-select form-select-sm" style="width:auto">
+              <option value="">Todos los usuarios</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Usuario</th>
+                <th>Fecha</th>
+                <th>Desde</th>
+                <th>Hasta</th>
+                <th>Motivo</th>
+                <th style="width:60px"></th>
+              </tr>
+            </thead>
+            <tbody id="pu-tbody"></tbody>
+          </table>
+        </div>
+        <div id="pu-empty" class="text-center text-muted py-4 d-none">
+          <i class="ti ti-clock-off fs-2 d-block mb-1"></i>No hay permisos registrados.
+        </div>
+      </div>
+    </div>
+
+    <!-- Resultado de creación -->
+    <div id="pu-crear-result" class="d-none">
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title mb-3 text-success">
+            <i class="ti ti-check me-1"></i>Permiso creado
+          </h5>
+          <div id="pu-crear-content"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="my-4" />
+
+<!-- ================================================================
+     Ausencias (gestión masiva de actividades ante ausencias largas)
+     ================================================================ -->
+<div class="row">
+  <div class="col-12">
+    <h4 class="mb-3">
+      <i class="ti ti-user-off me-1"></i>
+      Ausencias
+    </h4>
+    <p class="text-muted">
+      Gestiona ausencias largas de un usuario. Las actividades en el rango
+      pueden reasignarse a otro usuario o pasarse a bono.
+    </p>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title mb-3">Nueva ausencia</h5>
+
+        <div class="mb-3">
+          <label for="au-usuario" class="form-label">Usuario <span class="text-danger">*</span></label>
+          <select id="au-usuario" class="form-select">
+            <option value="">— Selecciona —</option>
+          </select>
+        </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label for="au-fecha-desde" class="form-label">Desde <span class="text-danger">*</span></label>
+            <input type="date" id="au-fecha-desde" class="form-control" />
+          </div>
+          <div class="col-6">
+            <label for="au-fecha-hasta" class="form-label">Hasta <span class="text-danger">*</span></label>
+            <input type="date" id="au-fecha-hasta" class="form-control" />
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="au-motivo" class="form-label">Motivo</label>
+          <textarea id="au-motivo" class="form-control" rows="2" placeholder="Ej: Licencia médica, renuncia, etc."></textarea>
+        </div>
+
+        <button id="au-btn-preview" class="btn btn-outline-secondary w-100 mb-2">
+          <i class="ti ti-eye me-1"></i>Vista previa
+        </button>
+        <span class="text-muted ms-2 small" id="au-preview-status"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <!-- Actividades afectadas -->
+    <div id="au-actividades-wrap" class="d-none">
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title mb-3">
+            Actividades afectadas
+            <span class="badge bg-secondary ms-1" id="au-actividades-count">0</span>
+          </h5>
+          <div class="alert alert-warning py-2 mb-2 small d-none" id="au-urgentes-warning">
+            <i class="ti ti-alert-triangle me-1"></i>
+            Las actividades con prioridad <strong>ALTA</strong> o bloqueadas no pueden reasignarse y pasarán a bono automáticamente.
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:40px">#</th>
+                  <th>Cliente</th>
+                  <th>Actividad</th>
+                  <th>Fecha</th>
+                  <th>Hora</th>
+                  <th>Prioridad</th>
+                  <th>F. entrega</th>
+                  <th style="width:200px">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="au-tbody"></tbody>
+            </table>
+          </div>
+          <div class="d-flex justify-content-end gap-2 mt-3">
+            <button type="button" class="btn btn-warning" id="au-btn-ejecutar" disabled>
+              <i class="ti ti-play me-1"></i>
+              Ejecutar ausencia
+            </button>
+          </div>
+          <div id="au-result" class="mt-3"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -296,7 +296,6 @@ class ClientesService {
 
       // 5) Actividades
       const actividadesCreadas = [];
-      const conflictsByIndex = [];
       const assignedUserIds = new Set();
 
       for (const [idx, a] of payload.actividades.entries()) {
@@ -350,29 +349,6 @@ class ClientesService {
           throw e;
         }
 
-        // Conflictos de slot. Solo relevante si NO es reunión.
-        if (!reunionTipo) {
-          const conflictos =
-            await potencialesClientesService.checkSlotConflict(
-              usuarioAsig,
-              a.fecha_asignacion,
-              horaIniDate,
-              horaFinDate,
-            );
-          if (conflictos.length > 0) {
-            conflictsByIndex.push({
-              index: idx,
-              tarea_id: Number(a.tarea_id),
-              usuario_asignado_id: usuarioAsig,
-              fecha: a.fecha_asignacion,
-              hora_inicio: a.hora_inicio,
-              minutos,
-              conflicts: conflictos,
-            });
-            continue; // No la creamos; las otras sí, pero al final cortamos.
-          }
-        }
-
         const actividad = await tx.actividades.create({
           data: {
             prospecto_id: prospecto.id,
@@ -423,17 +399,6 @@ class ClientesService {
           usuario_id: usuarioAsig,
         });
         assignedUserIds.add(usuarioAsig);
-      }
-
-      // Si alguna actividad tuvo conflicto, abortamos toda la transacción
-      // con SLOT_CONFLICT y detalle por actividad.
-      if (conflictsByIndex.length > 0) {
-        const e = new Error(
-          "Una o más actividades chocan con el horario del auxiliar.",
-        );
-        e.code = "SLOT_CONFLICT";
-        e.conflicts = conflictsByIndex;
-        throw e;
       }
 
       // 6) Historial de estados del cliente

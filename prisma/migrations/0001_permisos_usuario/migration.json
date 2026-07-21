@@ -1,0 +1,20 @@
+{
+  "version": "5.2",
+  "steps": [
+    {
+      "tag": "CreateTable",
+      "model": "permisos_usuario",
+      "columns": {
+        "id": { "type": "SERIAL", "isId": true },
+        "usuario_id": { "type": "INT" },
+        "fecha": { "type": "DATE" },
+        "hora_inicio": { "type": "TIME" },
+        "hora_fin": { "type": "TIME" },
+        "motivo": { "type": "VARCHAR(255)" },
+        "estado": { "type": "BOOLEAN", "default": true },
+        "created_at": { "type": "TIMESTAMPTZ", "default": "NOW()" },
+        "updated_at": { "type": "TIMESTAMPTZ", "default": "NOW()" }
+      }
+    }
+  ]
+}

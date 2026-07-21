@@ -92,6 +92,75 @@ class CalendarioAsistenteController {
         .json({ error: "Error interno al obtener las reuniones." });
     }
   }
+
+  // GET /api/calendario-asistente/horas-extras/resumen?usuario_id=N
+  async getResumenHorasExtras(req, res) {
+    try {
+      const usuarioId =
+        req.query.usuario_id != null ? Number(req.query.usuario_id) : null;
+      const data = await calendarioAsistenteService.getResumenHorasExtras(usuarioId);
+      return res.json({ success: true, data });
+    } catch (error) {
+      console.error("CalendarioAsistente.getResumenHorasExtras error:", error);
+      return res
+        .status(500)
+        .json({ error: "Error interno al obtener resumen de horas extras." });
+    }
+  }
+
+  // GET /api/calendario-asistente/horas-extras/canje-detail?horario_id=N
+  async getCanjeDetail(req, res) {
+    try {
+      const horarioId = req.query.horario_id != null ? Number(req.query.horario_id) : null;
+      const data = await calendarioAsistenteService.getCanjeDetail(horarioId);
+      return res.json({ success: true, data });
+    } catch (error) {
+      if (error.code === "NOT_FOUND") return res.status(404).json({ error: error.message });
+      if (error.code === "BAD_REQUEST") return res.status(400).json({ error: error.message });
+      console.error("CalendarioAsistente.getCanjeDetail error:", error);
+      return res.status(500).json({ error: "Error interno al obtener detalle del canje." });
+    }
+  }
+
+  // POST /api/calendario-asistente/horas-extras/canjear
+  // body: { ids: number[], fecha_destino: string, hora_inicio?: string }
+  async canjearHorasExtras(req, res) {
+    try {
+      const { ids, fecha_destino, hora_inicio } = req.body || {};
+      const data = await calendarioAsistenteService.canjearHorasExtras({
+        ids,
+        fechaDestino: fecha_destino,
+        horaInicio: hora_inicio,
+      });
+      return res.json({ success: true, data });
+    } catch (error) {
+      if (error.code === "BAD_REQUEST" || error.code === "NOT_FOUND") {
+        return res.status(400).json({ error: error.message });
+      }
+      console.error("CalendarioAsistente.canjearHorasExtras error:", error);
+      return res
+        .status(500)
+        .json({ error: "Error interno al canjear horas extras." });
+    }
+  }
+
+  // POST /api/calendario-asistente/horas-extras/pagar
+  // body: { ids: number[] }
+  async pagarHorasExtras(req, res) {
+    try {
+      const { ids } = req.body || {};
+      const data = await calendarioAsistenteService.pagarHorasExtras(ids);
+      return res.json({ success: true, data });
+    } catch (error) {
+      if (error.code === "BAD_REQUEST" || error.code === "NOT_FOUND") {
+        return res.status(400).json({ error: error.message });
+      }
+      console.error("CalendarioAsistente.pagarHorasExtras error:", error);
+      return res
+        .status(500)
+        .json({ error: "Error interno al pagar horas extras." });
+    }
+  }
 }
 
 export default new CalendarioAsistenteController();

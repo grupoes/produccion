@@ -14,4 +14,24 @@ router.get(
   calendarioAsistenteController.getUsuarioOcupaFecha,
 );
 
+router.get(
+  "/horas-extras/resumen",
+  calendarioAsistenteController.getResumenHorasExtras,
+);
+
+router.get(
+  "/horas-extras/canje-detail",
+  calendarioAsistenteController.getCanjeDetail,
+);
+
+router.post(
+  "/horas-extras/canjear",
+  calendarioAsistenteController.canjearHorasExtras,
+);
+
+router.post(
+  "/horas-extras/pagar",
+  calendarioAsistenteController.pagarHorasExtras,
+);
+
 export default router;

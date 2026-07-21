@@ -1,4 +1,5 @@
 import prisma from "../config/db.js";
+import reunionesAsistenteService from "./reuniones-asistente.service.js";
 
 // Helpers de formateo (idénticos al criterio que usa
 // reuniones-asistente.service.js#fmtLocalDate / #minToHHMM). Acá los
@@ -99,7 +100,14 @@ class CalendarioAsistenteService {
     }
     const uid = Number(usuarioId);
     const last = await prisma.horario_usuario.findFirst({
-      where: { usuario_id: uid, estado: true },
+      where: {
+        usuario_id: uid,
+        estado: true,
+        OR: [
+          { marca: null },
+          { marca: { notIn: ["canje", "libre", "permiso"] } },
+        ],
+      },
       orderBy: [{ fecha: "desc" }, { id: "desc" }],
       select: { fecha: true, hora_fin: true, hora_inicio: true },
     });
@@ -107,23 +115,14 @@ class CalendarioAsistenteService {
       return { exists: false, fecha: null, hora_fin: null };
     }
     const fechaStr = fmtLocalDate(last.fecha);
+    const horaInicioMin = hmsToMin(last.hora_inicio);
     const horaFinMin = hmsToMin(last.hora_fin);
-
-    // Buscar la jornada del usuario para ese día de la semana y ajustar
-    // la hora sugerida al inicio del SIGUIENTE bloque de jornada si
-    // coincide con el fin del bloque actual (caso típico 13:00 con
-    // turno mañana+8h y turno tarde).
-    const fechaLocal = parseLocalDate(fechaStr);
-    const horaSugerida = await this.#ajustarHoraFinAJornada(
-      uid,
-      fechaLocal,
-      horaFinMin,
-    );
 
     return {
       exists: true,
       fecha: fechaStr,
-      hora_fin: minToHHMM(horaSugerida != null ? horaSugerida : horaFinMin),
+      hora_inicio: minToHHMM(horaInicioMin),
+      hora_fin: minToHHMM(horaFinMin),
     };
   }
 
@@ -457,9 +456,12 @@ class CalendarioAsistenteService {
     if (onlyConSlot) {
       const whereHu = {
         estado: true,
-        // Filtramos slots huérfanos (sin actividad padre) directamente
-        // por la FK; más barato y seguro que un filtro de relación.
-        actividad_id: { not: null },
+        OR: [
+          // Slots normales con actividad padre
+          { actividad_id: { not: null } },
+          // Slots de marca libre / canje / permiso (sin actividad)
+          { marca: { in: ['libre', 'canje', 'permiso'] } },
+        ],
         ...(usuarioId != null ? { usuario_id: Number(usuarioId) } : {}),
       };
 
@@ -473,6 +475,7 @@ class CalendarioAsistenteService {
           hora_inicio: true,
           hora_fin: true,
           duracion_minutos: true,
+          marca: true,
           usuario_id: true,
           actividades: {
             select: {
@@ -525,40 +528,31 @@ class CalendarioAsistenteService {
         take: 600,
       });
       return slots
-        .filter((s) => s.actividades) // descarta slots huérfanos
+        .filter((s) => s.actividades || (s.marca && ['libre', 'canje', 'permiso'].includes(s.marca)))
         .map((s) => {
           const a = s.actividades;
+          const esSlotMarca = !a && s.marca && ['libre', 'canje', 'permiso'].includes(s.marca);
           return {
-            // id del SLOT (no de la actividad) → FullCalendar maneja
-            // cada bloque como evento independiente, permitiendo
-            // moverlos uno por uno sin "pegar" los demás.
             id: `hu-${s.id}`,
-            actividad_id: a.id,
+            actividad_id: a?.id || (esSlotMarca ? 0 : null),
             horario_usuario_id: s.id,
-            estado_progreso: a.estado_progreso,
-            prioridad: a.prioridad,
-            estado: a.estado,
-            color: a.color || null,
-            usuario_id: s.usuario_id || a.usuario_id,
+            estado_progreso: a?.estado_progreso || (esSlotMarca ? 'completada' : null),
+            prioridad: a?.prioridad || null,
+            estado: a?.estado ?? true,
+            color: a?.color || null,
+            usuario_id: s.usuario_id || a?.usuario_id,
             tiene_slot: true,
-            // Datos del BLOQUE (no de la actividad): cada bloque trae su
-            // propia fecha/hora/duración. Por eso se ve partido en el
-            // calendario respetando la jornada.
             fecha_inicio: fmtLocalDate(s.fecha),
             hora_inicio: minToHHMM(hmsToMin(s.hora_inicio)),
             hora_fin: minToHHMM(hmsToMin(s.hora_fin)),
+            marca: s.marca || null,
             tiempo_estimado_minutos:
               s.duracion_minutos != null
                 ? Number(s.duracion_minutos)
-                : Number(a.tiempo_estimado_minutos) || null,
-            // Total estimado de la actividad padre (útil para el modal
-            // de detalle / tooltips). `programarPrimeraVez` lo acumula
-            // sumando la duración del slot nuevo al valor previo, así
-            // que refleja el total acumulado (original + reuniones
-            // agregadas) y crece cuando se programa una nueva reunión.
-            actividad_total_minutos: a.tiempo_estimado_minutos,
-            prospecto: buildProspecto(a.prospectos),
-            tarea: buildTarea(a.tarea),
+                : Number(a?.tiempo_estimado_minutos) || null,
+            actividad_total_minutos: a?.tiempo_estimado_minutos || null,
+            prospecto: a ? buildProspecto(a.prospectos) : null,
+            tarea: a ? buildTarea(a.tarea) : null,
           };
         });
     }
@@ -637,6 +631,290 @@ class CalendarioAsistenteService {
       prospecto: buildProspecto(a.prospectos),
       tarea: buildTarea(a.tarea),
     }));
+  }
+  // GET /api/calendario-asistente/horas-extras/resumen?usuario_id=N
+  // Devuelve conteo y total de minutos de horas extra/libre de la semana
+  // actual (lunes a domingo) para el usuario indicado.
+  async getResumenHorasExtras(usuarioId) {
+    const uid = Number(usuarioId);
+    if (!uid) return { rows: [], resumen: { extra: { count: 0, minutos: 0 }, libre: { count: 0, minutos: 0 } } };
+
+    const hoy = new Date();
+    const dia = hoy.getDay();
+    const diffLun = dia === 0 ? -6 : 1 - dia;
+    const lun = new Date(hoy);
+    lun.setDate(hoy.getDate() + diffLun);
+    const dom = new Date(lun);
+    dom.setDate(lun.getDate() + 6);
+
+    const raw = await prisma.$queryRawUnsafe(
+      `SELECT he.id, TO_CHAR(he.fecha, 'YYYY-MM-DD') AS fecha, he.minutos, he.tipo,
+              TO_CHAR(hu.hora_inicio::time, 'HH24:MI') AS hora_inicio,
+              TO_CHAR(hu.hora_fin::time, 'HH24:MI') AS hora_fin,
+              a.id AS actividad_id, t.nombre AS actividad_nombre, p.titulo_prospecto
+       FROM horas_extras he
+       LEFT JOIN horario_usuario hu ON hu.id = he.horario_id
+       LEFT JOIN actividades a ON a.id = he.actividad_id
+       LEFT JOIN tarea t ON t.id = a.tarea_id
+       LEFT JOIN prospectos p ON p.id = a.prospecto_id
+       WHERE he.usuario_id = $1
+         AND he.fecha >= $2::date
+         AND he.fecha <= $3::date
+         AND he.estado = 'pendiente'
+       ORDER BY he.fecha ASC, he.id ASC`,
+      uid, lun, dom,
+    );
+
+    const rows = Array.isArray(raw) ? raw : [];
+
+    const extra = { count: 0, minutos: 0 };
+    const libre = { count: 0, minutos: 0 };
+    for (const r of rows) {
+      const t = r.tipo === "libre" ? libre : extra;
+      t.count += 1;
+      t.minutos += Number(r.minutos) || 0;
+    }
+
+    const mapped = rows.map((r) => ({
+      id: r.id,
+      fecha: r.fecha,
+      minutos: r.minutos,
+      tipo: r.tipo,
+      hora_inicio: r.hora_inicio || "—",
+      hora_fin: r.hora_fin || "—",
+      actividad: r.actividad_nombre || "—",
+      prospecto: r.titulo_prospecto || "—",
+    }));
+
+    return { rows: mapped, resumen: { extra, libre } };
+  }
+
+  // POST /api/calendario-asistente/horas-extras/canjear
+  // Canjea horas extra pendientes por un bloque libre en fecha_destino.
+  async canjearHorasExtras({ ids, fechaDestino, horaInicio: horaInicioStr }) {
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      const e = new Error("Selecciona al menos una hora extra.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+    if (!fechaDestino) {
+      const e = new Error("Debes indicar una fecha de destino.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    const extras = await prisma.horas_extras.findMany({
+      where: {
+        id: { in: ids.map(Number) },
+        tipo: "extra",
+        estado: "pendiente",
+      },
+      select: {
+        id: true,
+        minutos: true,
+        usuario_id: true,
+        horario_id: true,
+      },
+    });
+
+    if (extras.length === 0) {
+      const e = new Error("No se encontraron horas extras pendientes con los ids proporcionados.");
+      e.code = "NOT_FOUND";
+      throw e;
+    }
+
+    const fechaDest = new Date(fechaDestino + "T00:00:00");
+
+    // Hora de inicio proporcionada por el usuario o default 09:00
+    let horaInicio;
+    if (horaInicioStr) {
+      const [h, m] = String(horaInicioStr).split(":").map(Number);
+      horaInicio = new Date(Date.UTC(1970, 0, 1, h || 9, m || 0));
+    } else {
+      horaInicio = new Date(Date.UTC(1970, 0, 1, 9, 0));
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const uid = Number(extras[0].usuario_id);
+      if (!uid) throw Object.assign(new Error("Usuario no identificado."), { code: "BAD_REQUEST" });
+
+      // Sumar minutos de todos los extras seleccionados
+      const totalMinutos = extras.reduce((acc, e) => acc + (Number(e.minutos) || 0), 0);
+      const hi = horaInicio.getUTCHours();
+      const mi = horaInicio.getUTCMinutes() + totalMinutos;
+      const horaFin = new Date(Date.UTC(1970, 0, 1, hi + Math.floor(mi / 60), mi % 60));
+
+      // Crear UN bloque canjeado en la fecha destino
+      const nuevoBloque = await tx.horario_usuario.create({
+        data: {
+          usuario_id: uid,
+          fecha: fechaDest,
+          hora_inicio: horaInicio,
+          hora_fin: horaFin,
+          duracion_minutos: totalMinutos,
+          marca: "canje",
+          estado: true,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      });
+
+      // Marcar extras originales como canjeados y vincular al bloque
+      for (const extra of extras) {
+        try {
+          await tx.horas_extras.update({
+            where: { id: extra.id },
+            data: {
+              estado: "canjeado",
+              canje_horario_id: nuevoBloque.id,
+              updated_at: new Date(),
+            },
+          });
+        } catch (_) {
+          // Si canje_horario_id aún no existe en BD, actualizar sin ella
+          await tx.horas_extras.update({
+            where: { id: extra.id },
+            data: { estado: "canjeado", updated_at: new Date() },
+          });
+        }
+      }
+
+      // Marcar los bloques originales (deshabilitados) como "canje" para filtrar después
+      const bloquesOriginales = [...new Set(extras.map(e => e.horario_id).filter(Boolean))];
+      for (const bid of bloquesOriginales) {
+        await tx.horario_usuario.update({
+          where: { id: bid },
+          data: { marca: "canje", updated_at: new Date() },
+        });
+      }
+
+      // Rebalancear desde la fecha destino
+      if (fechaDestino) {
+        try {
+          await reunionesAsistenteService.rebalanceUsuario(uid, fechaDestino, {
+            motivo: "Rebalance post-canje de horas extra",
+            fillFreeSlots: false,
+          });
+        } catch (_) {
+          // Non-critical
+        }
+      }
+
+      return { canjeados: extras.length, bloque_creado: nuevoBloque.id };
+    });
+
+    return result;
+  }
+
+  // GET /api/calendario-asistente/horas-extras/canje-detail?horario_id=N
+  // Devuelve el bloque canjeado + las horas extra que lo originaron.
+  async getCanjeDetail(horarioId) {
+    const hid = Number(horarioId);
+    if (!hid) {
+      const e = new Error("horario_id requerido.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    const bloque = await prisma.horario_usuario.findUnique({
+      where: { id: hid },
+      select: {
+        id: true,
+        fecha: true,
+        hora_inicio: true,
+        hora_fin: true,
+        duracion_minutos: true,
+        marca: true,
+      },
+    });
+
+    if (!bloque) {
+      const e = new Error("Bloque no encontrado.");
+      e.code = "NOT_FOUND";
+      throw e;
+    }
+
+    // Buscar horas extra vinculadas por canje_horario_id (si la columna existe)
+    let extras = [];
+    try {
+      const extrasRaw = await prisma.horas_extras.findMany({
+        where: { canje_horario_id: hid },
+        orderBy: { id: "asc" },
+        select: {
+          id: true,
+          fecha: true,
+          minutos: true,
+          tipo: true,
+          estado: true,
+          actividades: {
+            select: {
+              id: true,
+              prospectos: {
+                select: { titulo_prospecto: true },
+              },
+              tarea: {
+                select: { nombre: true },
+              },
+            },
+          },
+        },
+      });
+      extras = (extrasRaw || []).map((he) => ({
+        id: he.id,
+        fecha: he.fecha instanceof Date
+          ? `${he.fecha.getUTCFullYear()}-${String(he.fecha.getUTCMonth() + 1).padStart(2, "0")}-${String(he.fecha.getUTCDate()).padStart(2, "0")}`
+          : String(he.fecha).slice(0, 10),
+        minutos: he.minutos,
+        tipo: he.tipo,
+        estado: he.estado,
+        actividad: he.actividades?.tarea?.nombre || "—",
+        prospecto: he.actividades?.prospectos?.titulo_prospecto || "—",
+      }));
+    } catch (_) {
+      // Columna canje_horario_id aún no existe en BD (falta migración)
+      extras = [];
+    }
+
+    return {
+      bloque: {
+        id: bloque.id,
+        fecha: bloque.fecha instanceof Date
+          ? fmtLocalDate(bloque.fecha)
+          : String(bloque.fecha).slice(0, 10),
+        hora_inicio: minToHHMM(hmsToMin(bloque.hora_inicio)),
+        hora_fin: minToHHMM(hmsToMin(bloque.hora_fin)),
+        duracion_minutos: bloque.duracion_minutos,
+        marca: bloque.marca,
+      },
+      extras,
+    };
+  }
+
+  // POST /api/calendario-asistente/horas-extras/pagar
+  // Marca horas extra como pagadas.
+  async pagarHorasExtras(ids) {
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      const e = new Error("Selecciona al menos una hora extra.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    const result = await prisma.horas_extras.updateMany({
+      where: {
+        id: { in: ids.map(Number) },
+        tipo: "extra",
+        estado: "pendiente",
+      },
+      data: { estado: "pagado", updated_at: new Date() },
+    });
+
+    if (result.count === 0) {
+      const e = new Error("No se encontraron horas extras pendientes con los ids proporcionados.");
+      e.code = "NOT_FOUND";
+      throw e;
+    }
+
+    return { pagados: result.count };
   }
 }
 

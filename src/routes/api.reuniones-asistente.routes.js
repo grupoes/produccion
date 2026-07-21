@@ -46,4 +46,13 @@ router.post("/reuniones/:id/programar", reunionesAsistenteController.programar);
 //   DELETE /api/calendario-asistente/reuniones/:id
 router.delete("/reuniones/:id", reunionesAsistenteController.eliminar);
 
+// Guardar bloque como hora extra / hora libre (deshabilita + rebalance).
+//   POST /api/calendario-asistente/reuniones/:id/bloque/:horarioId/guardar
+//   body: { tipo: "extra" | "libre" }
+router.post("/reuniones/:id/bloque/:horarioId/guardar", reunionesAsistenteController.guardarBloque);
+
+// Actividades de un prospecto (tabla en AGREGAR CLIENTE).
+//   GET /api/calendario-asistente/prospectos/:id/actividades
+router.get("/prospectos/:id/actividades", reunionesAsistenteController.getProspectoActividades);
+
 export default router;

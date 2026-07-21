@@ -215,12 +215,47 @@ class ReunionesAsistenteController {
     const guard = ensureAsistenteProduccion(req);
     if (!guard.ok) return res.status(guard.status).json(guard.body);
     try {
+      const { motivo } = req.body || {};
       const data = await reunionesAsistenteService.eliminarReunion({
         actividadId: req.params.id,
+        motivo,
       });
       return res.json({ success: true, data });
     } catch (err) {
       return sendServiceError(res, err, "eliminar");
+    }
+  }
+
+  // POST /api/calendario-asistente/reuniones/:id/bloque/:horarioId/guardar
+  async guardarBloque(req, res) {
+    const guard = ensureAsistenteProduccion(req);
+    if (!guard.ok) return res.status(guard.status).json(guard.body);
+    try {
+      const b = req.body || {};
+      const data = await reunionesAsistenteService.guardarBloque({
+        actividadId: req.params.id,
+        horarioId: req.params.horarioId,
+        tipo: b.tipo,
+        asistenteId: guard.asistenteId,
+      });
+      return res.json({ success: true, data });
+    } catch (err) {
+      return sendServiceError(res, err, "guardarBloque");
+    }
+  }
+
+  // GET /api/calendario-asistente/prospectos/:id/actividades
+  async getProspectoActividades(req, res) {
+    const guard = ensureAsistenteProduccion(req);
+    if (!guard.ok) return res.status(guard.status).json(guard.body);
+    try {
+      const data =
+        await reunionesAsistenteService.getActividadesByProspectoId(
+          req.params.id,
+        );
+      return res.json({ success: true, data });
+    } catch (err) {
+      return sendServiceError(res, err, "getProspectoActividades");
     }
   }
 }

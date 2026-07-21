@@ -91,4 +91,23 @@ router.get("/importar-actividades", (req, res) => {
   });
 });
 
+// Permisos de usuario (solo ASISTENTE DE PRODUCCIÓN)
+router.get("/permisos-usuario", (req, res) => {
+  const user = req.session?.user || {};
+  const rol = user.rol || {};
+
+  if (!isAsistenteProduccion(rol) && Number(rol.id) !== ROL_ASISTENTE_PROD_ID) {
+    return res.status(403).send("Acceso denegado. Solo ASISTENTE DE PRODUCCIÓN.");
+  }
+
+  res.render("admin/permisos-usuario", {
+    title: "Permisos de Usuario - Grupo ES",
+    layout: "layout",
+    script:
+      '<script src="/js/admin/permisos-usuario.js?v=' +
+      Date.now() +
+      '"></script>',
+  });
+});
+
 export default router;

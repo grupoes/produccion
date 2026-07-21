@@ -5,7 +5,11 @@ const PRIORIDADES = ["ALTA", "MEDIA", "BAJA"];
 
 // Roles que reciben la notificación de nuevo potencial cliente.
 // Coincidencia sobre `roles.nombre` case-insensitive + sin acentos.
-const ROLES_NOTIFICABLES = ["super admin", "administrador", "jefe de produccion"];
+const ROLES_NOTIFICABLES = [
+  "super admin",
+  "administrador",
+  "jefe de produccion",
+];
 const ROL_AUX_PROD = "auxiliar de produccion";
 const ROL_JEFA_VENTAS = "jefa de ventas";
 const ROL_VALORADOR = "valorador";
@@ -19,32 +23,58 @@ const ROL_VALORADOR_ID = 10;
 // se fuerza la asignación a este rol y la fecha al día actual.
 const ROL_ASISTENTE_PROD = "asistente de produccion";
 const ROL_ASISTENTE_PROD_ID = 11;
-  // Etiqueta de `tipo_tarea.tipo` que dispara la regla de reunión.
-  // Match case + accent insensitive, contiene "REUNION" (cubre
-  // "REUNION", "REUNIONES", "Reunión", etc.).
-  const TIPO_REUNION = "REUNION";
-  // id hard-coded como red de seguridad por si en la BD la fila de
-  // tipo_tarea quedó con un nombre distinto al esperado.
-  const TIPO_REUNION_ID = 2;
+// Etiqueta de `tipo_tarea.tipo` que dispara la regla de reunión.
+// Match case + accent insensitive, contiene "REUNION" (cubre
+// "REUNION", "REUNIONES", "Reunión", etc.).
+const TIPO_REUNION = "REUNION";
+// id hard-coded como red de seguridad por si en la BD la fila de
+// tipo_tarea quedó con un nombre distinto al esperado.
+const TIPO_REUNION_ID = 2;
 
 // Modo de auto-asignación para nuevos potenciales clientes.
 // "valorador"     → primer usuario activo con rol VALORADOR (default).
 // "auxiliar_dia"  → primer usuario asignado al día (tabla asignacion_dias)
 //                   con rol AUXILIAR DE PRODUCCIÓN (modo histórico).
 // Override por env: POTENCIAL_AUTO_ASSIGN_MODE=auxiliar_dia
-const POTENCIAL_AUTO_ASSIGN_MODE =
-  (process.env.POTENCIAL_AUTO_ASSIGN_MODE || "valorador").toLowerCase();
+const POTENCIAL_AUTO_ASSIGN_MODE = (
+  process.env.POTENCIAL_AUTO_ASSIGN_MODE || "valorador"
+).toLowerCase();
 
 // Paleta de colores para asignar aleatoriamente a la actividad del
 // potencial cliente al crearse (no se pide al usuario en el modal).
 // Misma paleta que mostraba el color-picker antes para mantener
 // consistencia visual en el calendario.
 const POTENCIAL_COLOR_PALETTE = [
-  "#dc3545", "#f59e0b", "#3b82f6", "#10b981", "#8b5cf6", "#0ea5e9",
-  "#ef4444", "#f97316", "#06b6d4", "#84cc16", "#d946ef", "#14b8a6",
-  "#eab308", "#6366f1", "#ec4899", "#22c55e", "#a855f7", "#f43f5e",
-  "#0d9488", "#7c3aed", "#ca8a04", "#0284c7", "#dc2626", "#65a30d",
-  "#c026d3", "#0891b2", "#d97706", "#4f46e5", "#be123c", "#059669",
+  "#51bcdd",
+  "#f59e0b",
+  "#3b82f6",
+  "#10b981",
+  "#8b5cf6",
+  "#0ea5e9",
+  "#649b25",
+  "#f97316",
+  "#06b6d4",
+  "#84cc16",
+  "#d946ef",
+  "#14b8a6",
+  "#eab308",
+  "#6366f1",
+  "#ec4899",
+  "#22c55e",
+  "#a855f7",
+  "#e79ca9",
+  "#0d9488",
+  "#7c3aed",
+  "#ca8a04",
+  "#0284c7",
+  "#d487d4",
+  "#65a30d",
+  "#c026d3",
+  "#0891b2",
+  "#d97706",
+  "#4f46e5",
+  "#618392",
+  "#059669",
 ];
 const pickRandomColor = () =>
   POTENCIAL_COLOR_PALETTE[
@@ -519,7 +549,9 @@ class PotencialesClientesService {
         ? [regPersona.nombres, regPersona.apellidos]
             .filter(Boolean)
             .join(" ")
-            .trim() || regUsuario?.usuario || `usuario #${regUsuario?.id || "?"}`
+            .trim() ||
+          regUsuario?.usuario ||
+          `usuario #${regUsuario?.id || "?"}`
         : regUsuario?.usuario || null;
 
       return {
@@ -527,7 +559,8 @@ class PotencialesClientesService {
         fecha: a.fecha_inicio,
         hora: a.hora_inicio, // Date Timetz; el front lo formatea a HH:MM
         detalle: a.tarea?.nombre || null,
-        tipo_tarea: a.tarea?.tipo_tarea_tarea_tipo_tareaTotipo_tarea?.tipo || null,
+        tipo_tarea:
+          a.tarea?.tipo_tarea_tarea_tipo_tareaTotipo_tarea?.tipo || null,
         // Prospecto / cliente
         prospecto_id: p.id || null,
         nombre_cliente: contacto
@@ -798,7 +831,11 @@ class PotencialesClientesService {
     if (payload.usuario_asignado_id) {
       const asig = await prisma.usuarios.findUnique({
         where: { id: Number(payload.usuario_asignado_id) },
-        select: { id: true, estado: true, roles: { select: { id: true, nombre: true } } },
+        select: {
+          id: true,
+          estado: true,
+          roles: { select: { id: true, nombre: true } },
+        },
       });
       if (!asig) {
         const e = new Error("El usuario asignado no existe.");
@@ -1036,10 +1073,7 @@ class PotencialesClientesService {
           },
         });
         const cumpleanero = usuarioFull
-          ? isBirthdayOn(
-              usuarioFull.personas?.fecha_nacimiento,
-              fechaLocal,
-            )
+          ? isBirthdayOn(usuarioFull.personas?.fecha_nacimiento, fechaLocal)
           : false;
         if (cumpleanero) {
           const nombreCompleto = usuarioFull?.personas
@@ -1058,7 +1092,10 @@ class PotencialesClientesService {
         // (3) Tipo de jornada: el usuario debe tener una jornada
         //     "full time" o "part time" (case + accent insensitive).
         const nombreJornada = usuarioFull?.tipo_jornada?.nombre_jornada;
-        if (!nombreJornada || !matchesAny(nombreJornada, ["full time", "part time"])) {
+        if (
+          !nombreJornada ||
+          !matchesAny(nombreJornada, ["full time", "part time"])
+        ) {
           const e = new Error(
             "El usuario debe tener un tipo de jornada válido (full time o part time).",
           );
@@ -1389,10 +1426,7 @@ class PotencialesClientesService {
           : false;
         if (cumpleanero) {
           const nombreCompleto = usuarioFull?.personas
-            ? [
-                usuarioFull.personas.nombres,
-                usuarioFull.personas.apellidos,
-              ]
+            ? [usuarioFull.personas.nombres, usuarioFull.personas.apellidos]
                 .filter(Boolean)
                 .join(" ")
                 .trim() || "El usuario"
@@ -1544,7 +1578,11 @@ class PotencialesClientesService {
         }
       }
 
-      return { id: prospecto.id, actividadId: actividad.id, notifications: insertedNotifs };
+      return {
+        id: prospecto.id,
+        actividadId: actividad.id,
+        notifications: insertedNotifs,
+      };
     });
   }
 
@@ -1649,10 +1687,7 @@ class PotencialesClientesService {
       }
 
       // 3) drive_links
-      if (
-        linkDriveTrim &&
-        linkDriveTrim !== (existing.link_drive || null)
-      ) {
+      if (linkDriveTrim && linkDriveTrim !== (existing.link_drive || null)) {
         await tx.drive_links.create({
           data: {
             prospecto_id: idNum,
@@ -1715,9 +1750,7 @@ class PotencialesClientesService {
   async #findFreeSlotInSchedule(tx, usuarioAsig, fechaLocal, minutosEstimados) {
     const diaId = DAY_ID_BY_GETDAY[fechaLocal.getDay()] || null;
     if (!diaId) {
-      const e = new Error(
-        "La fecha seleccionada no es un día laborable.",
-      );
+      const e = new Error("La fecha seleccionada no es un día laborable.");
       e.code = "BAD_REQUEST";
       throw e;
     }
@@ -1783,9 +1816,7 @@ class PotencialesClientesService {
     // del bloque tal cual.
     const now = new Date();
     const isToday = isSameLocalDay(fechaLocal, now);
-    const nowMin = isToday
-      ? now.getHours() * 60 + now.getMinutes()
-      : 0;
+    const nowMin = isToday ? now.getHours() * 60 + now.getMinutes() : 0;
 
     for (const block of bloquesMin) {
       let cursor = isToday ? Math.max(block.ini, nowMin) : block.ini;
@@ -1818,7 +1849,10 @@ class PotencialesClientesService {
     // y cuánto dura la tarea. Le permite al usuario entender si tiene que
     // cambiar de usuario, de día o reducir la duración de la tarea.
     const bloquesStr = bloquesMin
-      .map((b) => `${minutosToHms(b.ini).slice(0, 5)}-${minutosToHms(b.fin).slice(0, 5)}`)
+      .map(
+        (b) =>
+          `${minutosToHms(b.ini).slice(0, 5)}-${minutosToHms(b.fin).slice(0, 5)}`,
+      )
       .join(", ");
     const e = new Error(
       `El usuario no tiene un bloque de horario lo suficientemente largo (${minutosEstimados} min) para el día seleccionado. Bloques disponibles: ${bloquesStr || "(sin bloques)"}.`,
@@ -1893,7 +1927,10 @@ class PotencialesClientesService {
     const actividadId = p.actividadId;
     const fecha = p.fecha;
     const horaInicio = p.horaInicio;
-    const duracionTotal = Math.max(0, Math.floor(Number(p.duracionMinutos) || 0));
+    const duracionTotal = Math.max(
+      0,
+      Math.floor(Number(p.duracionMinutos) || 0),
+    );
     const tipo = p.tipo || "actividad";
     const categoria = p.categoria || "potencial_cliente";
 
@@ -1932,7 +1969,8 @@ class PotencialesClientesService {
       // jornada hasta agotar la búsqueda): creamos una sola fila con el
       // rango completo. Esto mantiene la actividad visible aunque esté
       // fuera del horario laboral.
-      const horaFin = p.horaFin || new Date(horaInicio.getTime() + duracionTotal * 60_000);
+      const horaFin =
+        p.horaFin || new Date(horaInicio.getTime() + duracionTotal * 60_000);
       return await tx.horario_usuario.create({
         data: {
           ...baseData,
@@ -1978,7 +2016,14 @@ class PotencialesClientesService {
   // `{ fecha, horaInicio, horaFin, duracionMinutos }` listos para
   // insertar en `horario_usuario`. Si el usuario no tiene jornada para
   // ningún día dentro del rango de búsqueda, devuelve `[]`.
-  async #distributeAcrossJornada(tx, usuarioId, fecha, horaInicio, duracionMinutos, fechaLimite = null) {
+  async #distributeAcrossJornada(
+    tx,
+    usuarioId,
+    fecha,
+    horaInicio,
+    duracionMinutos,
+    fechaLimite = null,
+  ) {
     const segments = [];
     let restante = duracionMinutos;
 
@@ -1991,9 +2036,10 @@ class PotencialesClientesService {
     // suele venir como UTC-midnight de Prisma). Sin esto, en husos al
     // oeste de UTC (Perú = UTC-5) `new Date("2026-07-11")` se convierte
     // en 2026-07-10T19:00-05:00 y la comparación falla perdiendo un día.
-    const limitStr = fechaLimite instanceof Date && !isNaN(fechaLimite.getTime())
-      ? `${fechaLimite.getUTCFullYear()}-${String(fechaLimite.getUTCMonth() + 1).padStart(2, "0")}-${String(fechaLimite.getUTCDate()).padStart(2, "0")}`
-      : null;
+    const limitStr =
+      fechaLimite instanceof Date && !isNaN(fechaLimite.getTime())
+        ? `${fechaLimite.getUTCFullYear()}-${String(fechaLimite.getUTCMonth() + 1).padStart(2, "0")}-${String(fechaLimite.getUTCDate()).padStart(2, "0")}`
+        : null;
     const curStr = () =>
       `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, "0")}-${String(currentDate.getDate()).padStart(2, "0")}`;
     if (limitStr && curStr() > limitStr) return segments;
@@ -2059,6 +2105,27 @@ class PotencialesClientesService {
         continue;
       }
 
+      // Saltar bloques horario_usuario ocupados del día (canje, libre, otras actividades).
+      // Así la distribución nueva no se sobrepone a ellos; avanza automáticamente
+      // al hueco disponible inmediatamente después.
+      const dayOcupado = await tx.$queryRawUnsafe(
+        `SELECT TO_CHAR(hu.hora_inicio::time, 'HH24:MI:SS') AS hi,
+                TO_CHAR(hu.hora_fin::time,    'HH24:MI:SS') AS hf
+           FROM horario_usuario hu
+          WHERE hu.usuario_id = $1
+            AND hu.fecha      = $2::date
+            AND hu.estado     = true
+          ORDER BY hu.hora_inicio`,
+        usuarioId,
+        curStr(),
+      );
+      const ocupRanges = (dayOcupado || [])
+        .map((r) => ({
+          start: toMinFromHms(r.hi),
+          end: toMinFromHms(r.hf),
+        }))
+        .filter((r) => r.start != null && r.end != null && r.end > r.start);
+
       // Inicio del día: si es el primero, respetamos la hora que eligió
       // el usuario; si no, arrancamos a las 00:00 para encontrar el
       // primer bloque disponible.
@@ -2072,34 +2139,76 @@ class PotencialesClientesService {
         if (blockEnd <= blockStart) continue;
         if (cursorMin >= blockEnd) continue; // ya pasamos este bloque
 
-        // El segmento va desde el mayor(cursor, inicio del bloque) hasta
-        // el menor(segIni + restante, fin del bloque). Si el cursor cayó
-        // dentro de un break, hacemos snap al inicio del bloque: en ese
-        // caso `segIni > cursorMin` y hay que calcular el fin desde
-        // `segIni` (no desde `cursorMin`), si no el segmento terminaría
-        // antes de empezar y el bloque se descartaría.
+        // El rango disponible abarca todo el bloque de jornada; los
+        // segmentos se recortan contra bloques ocupados (canje/libre/etc).
         const segIni = Math.max(cursorMin, blockStart);
-        const segFin = Math.min(segIni + restante, blockEnd);
-        const segDur = segFin - segIni;
-        if (segDur <= 0) continue;
+        const segFin = blockEnd; // usar bloque completo; restante controla el tope
+        if (segFin <= segIni) continue;
 
-        const segFecha = new Date(currentDate);
-        const segHoraIni = new Date(
-          Date.UTC(1970, 0, 1, Math.floor(segIni / 60), segIni % 60, 0),
-        );
-        const segHoraFin = new Date(
-          Date.UTC(1970, 0, 1, Math.floor(segFin / 60), segFin % 60, 0),
-        );
+        // Dividir [segIni, segFin) en trozos libres, saltando ocupados.
+        let cursor = segIni;
+        for (const occ of ocupRanges) {
+          if (restante <= 0 || cursor >= segFin) break;
+          if (occ.end <= cursor) continue; // ocupado antes del cursor
+          if (occ.start >= segFin) break; // ocupado después del segmento
 
-        segments.push({
-          fecha: segFecha,
-          horaInicio: segHoraIni,
-          horaFin: segHoraFin,
-          duracionMinutos: segDur,
-        });
+          // Hueco libre: [cursor, occ.start)
+          if (occ.start > cursor) {
+            const libreDur = Math.min(occ.start - cursor, restante);
+            if (libreDur > 0) {
+              const segFecha = new Date(currentDate);
+              segments.push({
+                fecha: segFecha,
+                horaInicio: new Date(
+                  Date.UTC(1970, 0, 1, Math.floor(cursor / 60), cursor % 60, 0),
+                ),
+                horaFin: new Date(
+                  Date.UTC(
+                    1970,
+                    0,
+                    1,
+                    Math.floor((cursor + libreDur) / 60),
+                    (cursor + libreDur) % 60,
+                    0,
+                  ),
+                ),
+                duracionMinutos: libreDur,
+              });
+              cursor += libreDur;
+              restante -= libreDur;
+            }
+          }
+          cursor = Math.max(cursor, occ.end);
+        }
 
-        restante -= segDur;
-        cursorMin = segFin; // continuar dentro del mismo día desde aquí
+        // Hueco libre restante después del último ocupado
+        if (restante > 0 && cursor < segFin) {
+          const libreDur = Math.min(segFin - cursor, restante);
+          if (libreDur > 0) {
+            const segFecha = new Date(currentDate);
+            segments.push({
+              fecha: segFecha,
+              horaInicio: new Date(
+                Date.UTC(1970, 0, 1, Math.floor(cursor / 60), cursor % 60, 0),
+              ),
+              horaFin: new Date(
+                Date.UTC(
+                  1970,
+                  0,
+                  1,
+                  Math.floor((cursor + libreDur) / 60),
+                  (cursor + libreDur) % 60,
+                  0,
+                ),
+              ),
+              duracionMinutos: libreDur,
+            });
+            cursor += libreDur;
+            restante -= libreDur;
+          }
+        }
+
+        cursorMin = blockEnd; // avanzar al siguiente bloque de jornada
       }
 
       currentDate.setDate(currentDate.getDate() + 1);
@@ -2129,14 +2238,7 @@ class PotencialesClientesService {
         Date.UTC(1970, 0, 1, Math.floor(lastEndMin / 60), lastEndMin % 60, 0),
       );
       const finalHoraFin = new Date(
-        Date.UTC(
-          1970,
-          0,
-          1,
-          Math.floor(wallEndMin / 60),
-          wallEndMin % 60,
-          0,
-        ),
+        Date.UTC(1970, 0, 1, Math.floor(wallEndMin / 60), wallEndMin % 60, 0),
       );
 
       segments.push({
@@ -2244,7 +2346,10 @@ class PotencialesClientesService {
     const exclude = (uid) => creatorId && Number(uid) === creatorId;
 
     // 1) Roles administrativos tradicionales
-    const rolesAdminIds = await this.#findRoleIdsByNames(tx, ROLES_NOTIFICABLES);
+    const rolesAdminIds = await this.#findRoleIdsByNames(
+      tx,
+      ROLES_NOTIFICABLES,
+    );
     const adminIds = [];
     if (rolesAdminIds.length) {
       const us = await tx.usuarios.findMany({
@@ -2260,8 +2365,9 @@ class PotencialesClientesService {
 
     // 2) AUXILIAR DE PRODUCCIÓN asignados al día de hoy
     const rolAuxId = await this.#findRoleIdByName(tx, ROL_AUX_PROD);
-    const auxIds = (await this.#getAuxiliaresProduccionAsignadosHoy(tx, rolAuxId))
-      .filter((id) => !exclude(id));
+    const auxIds = (
+      await this.#getAuxiliaresProduccionAsignadosHoy(tx, rolAuxId)
+    ).filter((id) => !exclude(id));
 
     // 3) JEFA DE VENTAS (siempre, todos los activos)
     const rolJefaId = await this.#findRoleIdByName(tx, ROL_JEFA_VENTAS);
@@ -2497,9 +2603,7 @@ class PotencialesClientesService {
       proveedor: p.proveedor
         ? { id: p.proveedor.id, nombre: p.proveedor.nombre }
         : null,
-      origen: p.origen
-        ? { id: p.origen.id, nombre: p.origen.nombre }
-        : null,
+      origen: p.origen ? { id: p.origen.id, nombre: p.origen.nombre } : null,
       contactos,
       actividad: actividad
         ? {
@@ -2516,7 +2620,9 @@ class PotencialesClientesService {
     if (full) {
       base.actividades = (p.actividades || []).map((a) => {
         const usr =
-          a.usuario_id != null ? usuariosById[Number(a.usuario_id)] || null : null;
+          a.usuario_id != null
+            ? usuariosById[Number(a.usuario_id)] || null
+            : null;
         return {
           id: a.id,
           estado_progreso: a.estado_progreso,
@@ -2913,9 +3019,7 @@ class PotencialesClientesService {
 
       if (quiereAgendar) {
         const actPrioridad =
-          prioridad !== undefined && prioridad !== null
-            ? prioridad
-            : undefined;
+          prioridad !== undefined && prioridad !== null ? prioridad : undefined;
 
         const actData = {
           tarea_id: tarea.id,
@@ -3078,7 +3182,8 @@ class PotencialesClientesService {
           const actUpd = { updated_at: new Date() };
           if (tieneTarea) actUpd.tarea_id = tarea.id;
           if (colorFinal !== undefined) actUpd.color = colorFinal;
-          if (prioridad !== undefined && prioridad !== null) actUpd.prioridad = prioridad;
+          if (prioridad !== undefined && prioridad !== null)
+            actUpd.prioridad = prioridad;
           await tx.actividades.update({
             where: { id: actExistente.id },
             data: actUpd,
@@ -3118,9 +3223,7 @@ class PotencialesClientesService {
       });
       const notifRecipientIds = asistenteUsers
         .map((u) => Number(u.id))
-        .filter(
-          (id) => !usuarioId || Number(id) !== Number(usuarioId),
-        );
+        .filter((id) => !usuarioId || Number(id) !== Number(usuarioId));
 
       if (notifRecipientIds.length > 0) {
         const tituloNotif = "Prospecto convertido a cliente";
@@ -3200,10 +3303,7 @@ class PotencialesClientesService {
     if (!p.fecha_entrega) {
       return "La fecha de entrega es obligatoria para convertir a cliente.";
     }
-    if (
-      !Array.isArray(p.contactos) ||
-      p.contactos.length === 0
-    ) {
+    if (!Array.isArray(p.contactos) || p.contactos.length === 0) {
       return "Debes agregar al menos un contacto para convertir a cliente.";
     }
     for (const [i, c] of p.contactos.entries()) {
@@ -3464,11 +3564,11 @@ class PotencialesClientesService {
               a.bloqueada
          FROM horario_usuario hu
          LEFT JOIN actividades a ON a.id = hu.actividad_id
-        WHERE hu.usuario_id = $1
-          AND hu.estado     = true
-          AND hu.fecha      = $2::date
-          AND hu.hora_inicio < $3::timetz
-          AND hu.hora_fin    > $4::timetz`,
+         WHERE hu.usuario_id = $1
+           AND hu.estado     = true
+           AND hu.fecha      = $2::date
+           AND hu.hora_inicio < $3::timetz
+           AND hu.hora_fin    > $4::timetz`,
       usuarioId,
       fechaStr,
       horaFin,

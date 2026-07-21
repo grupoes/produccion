@@ -46,8 +46,11 @@ import apiActividadesRoutes from "./routes/api.actividades.routes.js";
 import apiKanbanRoutes from "./routes/api.kanban.routes.js";
 import apiCalendarioAsistenteRoutes from "./routes/api.calendario-asistente.routes.js";
 import apiReunionesAsistenteRoutes from "./routes/api.reuniones-asistente.routes.js";
+import apiPermisosUsuarioRoutes from "./routes/api.permisos-usuario.routes.js";
 import apiImportacionRoutes from "./routes/api.importacion.routes.js";
 import apiClientesRoutes from "./routes/api.clientes.routes.js";
+import apiTrabajosEntregaRoutes from "./routes/api.trabajos-entrega.routes.js";
+import trabajosEntregaRoutes from "./routes/trabajos-entrega.routes.js";
 
 import { requireAuth } from "./middlewares/auth.middleware.js";
 import modulesService from "./services/modules.service.js";
@@ -126,8 +129,10 @@ app.use("/api/actividades", requireAuth, apiActividadesRoutes);
 app.use("/api/kanban", requireAuth, apiKanbanRoutes);
 app.use("/api/calendario-asistente", requireAuth, apiCalendarioAsistenteRoutes);
 app.use("/api/calendario-asistente", requireAuth, apiReunionesAsistenteRoutes);
+app.use("/api/calendario-asistente/permisos", requireAuth, apiPermisosUsuarioRoutes);
 app.use("/api/importacion", requireAuth, apiImportacionRoutes);
 app.use("/api/clientes", requireAuth, apiClientesRoutes);
+app.use("/api/trabajos-entrega", requireAuth, apiTrabajosEntregaRoutes);
 app.use("/api", indexRoutes);
 
 // Rutas Admin (Retornan Vistas HTML) protegidas
@@ -148,5 +153,6 @@ app.use("/registrar-clientes-proveedores", requireAuth, registrarClientesProveed
 app.use("/proveedores", requireAuth, proveedoresRoutes);
 app.use("/configuracion-acciones", requireAuth, configuracionAccionesRoutes);
 app.use("/turnos-ventas", requireAuth, turnosVentasRoutes);
+app.use("/trabajos-entrega", requireAuth, trabajosEntregaRoutes);
 
 export default app;

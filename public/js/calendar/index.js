@@ -145,13 +145,12 @@
       );
       const d = (json && json.data) || {};
       console.log("[asistente-cal] apply defaults: respuesta", d);
-      if (d.exists && d.fecha && d.hora_fin) {
-        // Tiene historial → replicamos fecha del último bloque y hora_fin
-        // (la hora en que terminó la última actividad), de modo que la
-        // nueva actividad arranque justo después.
+      const horaDefault = d.hora_fin || d.hora_inicio;
+      if (d.exists && d.fecha && horaDefault) {
+        // Tiene historial → replicamos fecha y hora del último bloque.
         fechaEl.value = d.fecha;
-        horaEl.value = d.hora_fin;
-        console.log("[asistente-cal] apply defaults: aplicado", { fecha: d.fecha, hora: d.hora_fin });
+        horaEl.value = horaDefault;
+        console.log("[asistente-cal] apply defaults: aplicado", { fecha: d.fecha, hora: horaDefault });
       } else {
         // Sin historial → respetamos la fecha que el usuario haya puesto,
         // sólo dejamos la hora vacía para que elija.
@@ -323,22 +322,35 @@
             ? a.id.slice(3)
             : a.id,
         );
+    const esLibre = a.marca === "libre";
+    const esCanje = a.marca === "canje";
+    const esPermiso = a.marca === "permiso";
+
     return {
       id: eventId,
-      title: `${horaTxt}${a.tarea?.nombre || "(sin tarea)"}${prospectoTxt}`,
+      title: esCanje
+        ? `${horaTxt}⏳ Canjeado`
+        : esPermiso
+          ? `${horaTxt}🔒 Permiso`
+          : `${horaTxt}${a.tarea?.nombre || "(sin tarea)"}${prospectoTxt}`,
       start: start ? start.toISOString() : null,
       end,
       classNames: [calendarClassForEstado(a.estado_progreso)],
-      ...(color
-        ? { backgroundColor: color, borderColor: color }
-        : {}),
+      ...(esLibre
+        ? { backgroundColor: "#000", borderColor: "#000", textColor: "#fff" }
+        : esCanje
+          ? { backgroundColor: "#f59e0b", borderColor: "#f59e0b", textColor: "#fff" }
+        : esPermiso
+          ? { backgroundColor: "#e11d48", borderColor: "#e11d48", textColor: "#fff" }
+        : color
+          ? { backgroundColor: color, borderColor: color }
+          : {}),
       extendedProps: {
         actividad_id: parentActividadId,
-        // Guardamos el slot también, útil si en el futuro se quiere
-        // editar / mover un bloque individual.
         horario_usuario_id:
           a.horario_usuario_id != null ? Number(a.horario_usuario_id) : null,
         actividad: a,
+        marca: a.marca || null,
       },
     };
   }
@@ -579,10 +591,17 @@
     return `${m} min`;
   }
 
+  function fmtDDMMYYYY(ymd) {
+    if (!ymd) return "—";
+    const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+    return String(ymd);
+  }
+
   // Abre el modal de detalle. `preselectedActividad` opcional: si llega,
   // usamos esos datos (cuando se llama desde el sidebar que ya los tiene
   // cacheados). Si no, hacemos fetch a /api/calendario-asistente/reuniones/:id.
-  async function openDetailModal(actividadId, preselected) {
+  async function openDetailModal(actividadId, horarioId, preselected) {
     const modal = getModal("js-cal-event-modal");
     if (!modal) return;
 
@@ -590,19 +609,26 @@
     const titleEl = document.getElementById("js-cal-event-title");
     if (titleEl) titleEl.textContent = "Cargando…";
     [
-      "tarea", "tipo", "prioridad", "estado_progreso",
-      "fecha", "hora", "duracion", "motivo",
+      "tarea", "prioridad", "estado_progreso",
+      "tiempo_real", "global_inicio", "global_termino",
+      "slot_fecha", "slot_hora", "slot_duracion",
+      "motivo",
       "titulo_prospecto", "estado_cliente", "fecha_contacto",
       "fecha_entrega", "link_drive",
     ].forEach((k) => setCalField(k, "—"));
     setCalFieldHTML("contactos", "");
     setCalWrap("contactos", false);
+    setCalWrap("total_reales", false);
+    setCalWrap("global_inicio", false);
+    setCalWrap("global_termino", false);
+    setCalWrap("motivo_row", false);
     const warn = document.getElementById("js-cal-event-warning");
     if (warn) warn.classList.add("d-none");
     document.getElementById("js-cal-btn-reprogramar")?.classList.add("d-none");
     document.getElementById("js-cal-btn-ajustar-duracion")?.classList.add("d-none");
     document.getElementById("js-cal-btn-reasignar")?.classList.add("d-none");
     document.getElementById("js-cal-btn-eliminar")?.classList.add("d-none");
+    document.getElementById("js-cal-bloque-acciones")?.classList.add("d-none");
 
     let data = preselected;
     if (!data) {
@@ -633,31 +659,68 @@
     if (titleEl) titleEl.textContent = `${tareaNombre}${prospectoTxt}`;
 
     setCalField("tarea", tareaNombre);
-    setCalField(
-      "tipo",
-      data.tarea?.tipo_tarea?.tipo
-        ? `${data.tarea.tipo_tarea.tipo}${data.tarea.tipo_tarea.color ? ` (${data.tarea.tipo_tarea.color})` : ""}`
-        : "—",
-    );
     setCalFieldHTML("prioridad", prioridadBadgeHtml(data.prioridad));
     setCalFieldHTML("estado_progreso", estadoBadgeHtml(data.estado_progreso));
-    setCalField("fecha", data.fecha_inicio || "—");
-    const horaTxt =
-      data.hora_inicio
-        ? `${data.hora_inicio}${data.slot?.hora_fin ? ` — ${data.slot.hora_fin}` : ""}`
+
+    // Tiempo real (suma de duración de todos los bloques)
+    if (data.total_minutos_reales) {
+      setCalWrap("total_reales", true);
+      setCalField("tiempo_real", formatMin(data.total_minutos_reales));
+    }
+
+    // Inicio global (primer bloque)
+    if (data.global_inicio?.fecha) {
+      setCalWrap("global_inicio", true);
+      const txt = [fmtDDMMYYYY(data.global_inicio.fecha), data.global_inicio.hora].filter(Boolean).join(" ");
+      setCalField("global_inicio", txt);
+    }
+
+    // Término global (último bloque)
+    if (data.global_termino?.fecha) {
+      setCalWrap("global_termino", true);
+      const txt = [fmtDDMMYYYY(data.global_termino.fecha), data.global_termino.hora].filter(Boolean).join(" ");
+      setCalField("global_termino", txt);
+    }
+
+    // Bloque en calendario — mostrar el bloque clickeado por horario_id
+    const clickedBlock = horarioId && Array.isArray(data.bloques)
+      ? data.bloques.find((b) => b.id === horarioId)
+      : null;
+    const slotBlock = clickedBlock || data.slot || null;
+    setCalField("slot_fecha", slotBlock?.fecha ? fmtDDMMYYYY(slotBlock.fecha) : "—");
+    const slotHoraTxt =
+      slotBlock?.hora_inicio
+        ? `${slotBlock.hora_inicio}${slotBlock.hora_fin ? ` — ${slotBlock.hora_fin}` : ""}`
         : "—";
-    setCalField("hora", horaTxt);
-    setCalField("duracion", formatMin(data.tiempo_estimado_minutos || data.slot?.duracion_minutos));
-    setCalField("motivo", data.motivo_reprograma || "—");
+    setCalField("slot_hora", slotHoraTxt);
+    setCalField("slot_duracion", formatMin(slotBlock?.duracion_minutos));
+    const slotMarca = slotBlock?.marca || null;
+    if (slotMarca === "libre") {
+      setCalWrap("slot_marca_row", true);
+      setCalFieldHTML("slot_marca", '<span class="badge bg-dark">Hora libre</span>');
+    } else if (slotMarca === "canje") {
+      setCalWrap("slot_marca_row", true);
+      setCalFieldHTML("slot_marca", '<span class="badge bg-warning text-dark">Canjeado</span>');
+    } else {
+      setCalWrap("slot_marca_row", false);
+    }
+
+    const esReunion =
+      Number(data.tarea?.tipo_tarea?.id) === 2 ||
+      data.hu_tipo === "reunion";
+    if (esReunion && data.motivo_reprograma) {
+      setCalWrap("motivo_row", true);
+      setCalField("motivo", data.motivo_reprograma);
+    }
 
     setCalField("titulo_prospecto", data.prospecto?.titulo || "—");
     setCalField("estado_cliente", data.prospecto?.estado_cliente || "—");
-    setCalField("fecha_contacto", data.prospecto?.fecha_contacto || "—");
-    setCalField("fecha_entrega", data.prospecto?.fecha_entrega || "—");
+    setCalField("fecha_contacto", fmtDDMMYYYY(data.prospecto?.fecha_contacto));
+    setCalField("fecha_entrega", fmtDDMMYYYY(data.prospecto?.fecha_entrega));
     if (data.prospecto?.link_drive) {
       setCalFieldHTML(
         "link_drive",
-        `<a href="${escapeHtml(data.prospecto.link_drive)}" target="_blank" rel="noopener" class="link-primary text-break">${escapeHtml(data.prospecto.link_drive)}</a>`,
+        `<a href="${escapeHtml(data.prospecto.link_drive)}" target="_blank" rel="noopener" class="text-primary fw-semibold text-break"><i class="ti ti-external-link me-1"></i>${escapeHtml(data.prospecto.link_drive)}</a>`,
       );
     } else {
       setCalField("link_drive", "—");
@@ -689,9 +752,6 @@
     // Habilitar botones según estado de la actividad.
     const enProgreso = String(data.estado_progreso || "").toLowerCase() === "en_progreso";
     const cancelada = !data.estado;
-    const esReunion =
-      Number(data.tarea?.tipo_tarea?.id) === 2 ||
-      data.hu_tipo === "reunion";
     const etiqueta = esReunion ? "reunión" : "actividad";
     if (warn && cancelada) {
       warn.classList.remove("d-none");
@@ -702,6 +762,9 @@
       const btnAjd = document.getElementById("js-cal-btn-ajustar-duracion");
       const btnReasig = document.getElementById("js-cal-btn-reasignar");
       const btnElim = document.getElementById("js-cal-btn-eliminar");
+      const bloqueAcciones = document.getElementById("js-cal-bloque-acciones");
+      const btnHoraExtra = document.getElementById("js-cal-btn-hora-extra");
+      const btnHoraLibre = document.getElementById("js-cal-btn-hora-libre");
       if (btnRepro) {
         btnRepro.classList.remove("d-none");
         btnRepro.dataset.actividadId = String(data.id);
@@ -721,9 +784,80 @@
         btnElim.dataset.esReunion = esReunion ? "1" : "0";
         btnElim.innerHTML = `<i class="ti ti-trash me-1"></i>Cancelar ${etiqueta}`;
       }
+      // Botones de hora extra / libre: solo para actividades NO reunión,
+      // solo si hay un bloque clickeado, y solo si el bloque no ya es hora libre
+      const hid = horarioId || slotBlock?.id || null;
+      if (bloqueAcciones && !esReunion && hid && slotMarca !== "libre") {
+        bloqueAcciones.classList.remove("d-none");
+        if (btnHoraExtra) {
+          btnHoraExtra.dataset.actividadId = String(data.id);
+          btnHoraExtra.dataset.horarioId = String(hid);
+        }
+        if (btnHoraLibre) {
+          btnHoraLibre.dataset.actividadId = String(data.id);
+          btnHoraLibre.dataset.horarioId = String(hid);
+        }
+      }
     }
 
     modal.show();
+  }
+
+  // -------- modal detalle de bloque canjeado -------------------------
+  async function openCanjeDetailModal(horarioId) {
+    const modal = getModal("js-he-canje-detail-modal");
+    if (!modal) return;
+    const content = document.getElementById("js-he-canje-detail-content");
+    if (!content) { modal.show(); return; }
+    content.innerHTML = '<p class="text-center text-muted py-3">Cargando…</p>';
+    modal.show();
+
+    try {
+      const json = await fetchJSON(
+        `/api/calendario-asistente/horas-extras/canje-detail?horario_id=${horarioId}`,
+      );
+      if (!json?.success) throw new Error("Error al obtener detalle");
+      const d = json.data;
+      const badgeHtml = '<span class="badge bg-warning text-dark">Canjeado</span>';
+      const extrasHtml = d.extras.length
+        ? `<table class="table table-sm table-bordered mb-0 mt-2">
+            <thead class="table-light">
+              <tr>
+                <th>Fecha</th>
+                <th>Prospecto</th>
+                <th>Actividad</th>
+                <th>Minutos</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${d.extras.map(e => `<tr>
+                <td>${escapeHtml(e.fecha)}</td>
+                <td>${escapeHtml(e.prospecto)}</td>
+                <td>${escapeHtml(e.actividad)}</td>
+                <td>${e.minutos} min</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>`
+        : '<p class="text-muted mb-0">Sin horas extra vinculadas.</p>';
+
+      content.innerHTML = `
+        <dl class="row mb-3">
+          <dt class="col-4 fw-medium text-muted">Fecha</dt>
+          <dd class="col-8">${escapeHtml(d.bloque.fecha)}</dd>
+          <dt class="col-4 fw-medium text-muted">Horario</dt>
+          <dd class="col-8">${escapeHtml(d.bloque.hora_inicio)} — ${escapeHtml(d.bloque.hora_fin)}</dd>
+          <dt class="col-4 fw-medium text-muted">Duración</dt>
+          <dd class="col-8">${d.bloque.duracion_minutos} min</dd>
+          <dt class="col-4 fw-medium text-muted">Estado</dt>
+          <dd class="col-8">${badgeHtml}</dd>
+        </dl>
+        <hr class="my-2">
+        <h6 class="text-uppercase text-muted fs-xxs fw-semibold mb-2">Horas extra canjeadas</h6>
+        ${extrasHtml}
+      `;
+    } catch (e) {
+      content.innerHTML = `<div class="alert alert-danger py-2 mb-0">Error: ${escapeHtml(e.message)}</div>`;
+    }
   }
 
   // -------- modal reprogramar ---------------------------------------
@@ -1016,41 +1150,36 @@
   }
 
   // -------- modal programar (REUNIONES + CLIENTES) ------------------
-  let nuevaState = { prospecto: null, tareas: [], tareasTodas: [], usuarios: [] };
-  let todosClientes = [];
+  let nuevaState = { prospecto: null, tareas: [], usuarios: [] };
 
   async function openNuevaModal(tab) {
     const modal = getModal("js-cal-nueva-modal");
     if (!modal) return;
-    document.getElementById("js-cal-nueva-prospecto-q").value = "";
     document.getElementById("js-cal-nueva-prospecto-id").value = "";
     document.getElementById("js-cal-nueva-prospecto-sel").classList.add("d-none");
-    document.getElementById("js-cal-nueva-prospecto-results").classList.add("d-none");
-    document.getElementById("js-cal-nueva-prospecto-results").innerHTML = "";
+    if (prospectoChoices) {
+      prospectoChoices.setChoiceByValue("");
+      prospectoChoices.setChoices([], "value", "label", true);
+    }
     // Defaults de fecha+hora se aplican DESPUÉS de cargar el select de
     // usuario (abajo), usando el historial de horario_usuario del usuario
     // seleccionado. Si no se llega a cargar, fallback a hoy/09:00.
     document.getElementById("js-cal-nueva-fecha").value = todayLocalYYYYMMDD();
     document.getElementById("js-cal-nueva-hora").value = "09:00";
-    document.getElementById("js-cal-nueva-duracion").value = 60;
+    document.getElementById("js-cal-nueva-duracion-h").value = 1;
+    document.getElementById("js-cal-nueva-duracion-m").value = 0;
     document.getElementById("js-cal-nueva-prioridad").value = "MEDIA";
     document.getElementById("js-cal-nueva-motivo").value = "";
     document.getElementById("js-cal-nueva-result").innerHTML = "";
 
-    // Cargar tareas (tipo REUNIÓN para el tab REUNIONES, todas para CLIENTES).
+    // Cargar tareas (todas).
     try {
       const json = await fetchJSON("/api/tareas");
       const all = json.data || json || [];
-      nuevaState.tareas = all.filter((t) => {
-        const tipo = String(t.tipo_tarea?.tipo || "").toLowerCase();
-        const id = Number(t.tipo_tarea?.id);
-        return id === 2 || /reunion/.test(tipo);
-      });
-      nuevaState.tareasTodas = all;
+      nuevaState.tareas = all;
     } catch (err) {
       console.error("[asistente-cal] loadTareas:", err);
       nuevaState.tareas = [];
-      nuevaState.tareasTodas = [];
     }
     // Poblar select de REUNIONES (sólo tipo REUNIÓN).
     const selTarea = document.getElementById("js-cal-nueva-tarea");
@@ -1062,19 +1191,27 @@
         ),
       )
       .join("");
-    // Poblar select de CLIENTES (todas las tareas).
-    const selCliTarea = document.getElementById("js-cal-cli-tarea");
-    if (selCliTarea) {
-      selCliTarea.innerHTML = ['<option value="">— Selecciona una tarea —</option>']
-        .concat(
-          nuevaState.tareasTodas.map(
-            (t) =>
-              `<option value="${t.id}" data-horas="${t.horas_estimadas || 60}">${escapeHtml(t.nombre)}${t.horas_estimadas ? ` · ${t.horas_estimadas} min` : ""}</option>`,
-          ),
-        )
-        .join("");
+    if (typeof Choices !== "undefined") {
+      if (selTarea._choices) selTarea._choices.destroy();
+      selTarea._choices = new Choices(selTarea, {
+        searchEnabled: true,
+        searchPlaceholderValue: "Buscar actividad…",
+        itemSelectText: "",
+        shouldSort: false,
+        placeholder: true,
+        placeholderValue: "Seleccionar…",
+      });
+      selTarea.addEventListener("change", function () {
+        const val = this.value;
+        if (!val) return;
+        const t = nuevaState.tareas.find((x) => String(x.id) === val);
+        if (t && t.horas_estimadas) {
+          const totalMin = Number(t.horas_estimadas) || 0;
+          document.getElementById("js-cal-nueva-duracion-h").value = Math.floor(totalMin / 60);
+          document.getElementById("js-cal-nueva-duracion-m").value = totalMin % 60;
+        }
+      });
     }
-
     // Cargar usuarios (reusamos el mismo endpoint del header, parseando
     // el <option> existente para no hacer doble fetch).
     nuevaState.usuarios = [];
@@ -1120,228 +1257,81 @@
 
     nuevaState.prospecto = null;
 
-    // Cargar clientes con actividades en segundo plano (no bloquea el modal).
-    if (!todosClientes.length) cargarClientesConActividades();
-
     modal.show();
-    // Mostrar/ocultar el botón "Crear reunión" del footer según el tab
-    const btnCrear = document.getElementById("js-cal-nueva-aplicar");
-    if (btnCrear) {
-      btnCrear.style.display = tab === "clientes" ? "none" : "";
-    }
-    if (tab === "clientes") {
-      document.getElementById("js-cal-tab-clientes-btn")?.click();
-      setTimeout(() => {
-        document.getElementById("js-cal-clientes-q")?.focus();
-      }, 350);
-    } else {
-      document.getElementById("js-cal-tab-reuniones-btn")?.click();
-      setTimeout(() => {
-        document.getElementById("js-cal-nueva-prospecto-q")?.focus();
-      }, 250);
-    }
-  }
-
-  // -------- CLIENTES tab (select + actividades) --------------------
-  async function cargarClientesConActividades() {
-    const sel = document.getElementById("js-cal-clientes-select");
-    if (!sel) return;
-    const prevValue = sel.value;
-    sel.innerHTML = '<option value="">— Cargando… —</option>';
-    sel.disabled = true;
-    try {
-      const json = await fetchJSON("/api/calendario-asistente/clientes-con-actividades?limit=100");
-      todosClientes = json.data || [];
-    } catch (err) {
-      console.error("[asistente-cal] loadClientes:", err);
-      todosClientes = [];
-    }
-    const sorted = todosClientes.slice().sort((a, b) => {
-      const aName = (a.titulo_prospecto || "").toLowerCase();
-      const bName = (b.titulo_prospecto || "").toLowerCase();
-      return aName.localeCompare(bName);
-    });
-    const options = ['<option value="">— Selecciona un cliente —</option>'];
-    sorted.forEach((c) => {
-      const contactosTxt = (c.contactos || [])
-        .map((x) => [x.nombres, x.apellidos].filter(Boolean).join(" ").trim())
-        .filter(Boolean)
-        .join(", ");
-      const label = `${c.titulo_prospecto || "(sin título)"}${contactosTxt ? ` · ${contactosTxt}` : ""}`;
-      const selected = String(c.id) === String(prevValue) ? " selected" : "";
-      options.push(`<option value="${c.id}"${selected}>${escapeHtml(label)}</option>`);
-    });
-    sel.innerHTML = options.join("");
-    sel.disabled = false;
-    if (prevValue && String(sel.value) === String(prevValue)) {
-      onClienteSelect();
-    }
-  }
-
-  function onClienteSelect() {
-    const sel = document.getElementById("js-cal-clientes-select");
-    const container = document.getElementById("js-cal-clientes-actividades");
-    const form = document.getElementById("js-cal-clientes-form");
-    const id = Number(sel?.value);
-    if (!id || !todosClientes.length) {
-      container.innerHTML = '<div class="text-center text-muted py-4"><i class="ti ti-info-circle me-1"></i>Seleccioná un cliente para programar una actividad.</div>';
-      if (form) form.style.display = "none";
-      return;
-    }
-    const cliente = todosClientes.find((c) => Number(c.id) === id);
-    if (!cliente) {
-      container.innerHTML = '<div class="text-center text-muted py-4">Cliente no encontrado.</div>';
-      if (form) form.style.display = "none";
-      return;
-    }
-    const acts = cliente.actividades || [];
-    const contacto = (cliente.contactos || [])
-      .map((x) => [x.nombres, x.apellidos].filter(Boolean).join(" ").trim())
-      .filter(Boolean)
-      .join(", ");
-    container.innerHTML = `<div class="card border mb-2">
-      <div class="card-body py-2 px-3">
-        <div class="fw-medium">${escapeHtml(cliente.titulo_prospecto || "(sin título)")}</div>
-        <div class="small text-muted">
-          ${contacto ? `<i class="ti ti-user me-1"></i>${escapeHtml(contacto)}` : ""}
-          ${cliente.fecha_entrega ? `<span class="ms-2"><i class="ti ti-calendar me-1"></i>F. entrega: ${escapeHtml(cliente.fecha_entrega)}</span>` : ""}
-        </div>
-      </div>
-    </div>`;
-    // Mostrar el formulario con defaults
-    if (form) {
-      form.style.display = "block";
-      form.dataset.prospectoId = id;
-    }
-    document.getElementById("js-cal-cli-fecha").value = todayLocalYYYYMMDD();
-    document.getElementById("js-cal-cli-hora").value = "09:00";
-    document.getElementById("js-cal-cli-duracion").value = 60;
-    document.getElementById("js-cal-cli-tarea").value = "";
-    // Mostrar mensaje si no hay actividades
-    if (!acts.length) {
-      const fecha = todayLocalYYYYMMDD();
-      const hora = "09:00";
-      container.innerHTML += `<div class="alert alert-info py-2 small mb-0">
-        <i class="ti ti-info-circle me-1"></i>
-        Este cliente no tiene actividades previas. Se empezará desde <strong>${fecha}</strong> a las <strong>${hora}</strong>.
-      </div>`;
-    }
-  }
-
-  // Cuando cambia la tarea en CLIENTES, actualizar duración con horas_estimadas.
-  document.getElementById("js-cal-cli-tarea")?.addEventListener("change", function () {
-    const sel = this;
-    const opt = sel.options[sel.selectedIndex];
-    if (opt && opt.value) {
-      const horas = Number(opt.getAttribute("data-horas")) || 60;
-      document.getElementById("js-cal-cli-duracion").value = horas;
-    }
-  });
-
-  // Submit del formulario CLIENTES.
-  document.getElementById("js-cal-cli-programar")?.addEventListener("click", submitClienteProgramar);
-
-  async function submitClienteProgramar() {
-    const form = document.getElementById("js-cal-clientes-form");
-    const prospectoId = Number(form?.dataset.prospectoId);
-    const tareaId = Number(document.getElementById("js-cal-cli-tarea").value);
-    const duracion = Number(document.getElementById("js-cal-cli-duracion").value);
-    const fecha = document.getElementById("js-cal-cli-fecha").value;
-    const hora = document.getElementById("js-cal-cli-hora").value;
-    const usuarioId = Number(document.getElementById("js-cal-nueva-usuario")?.value || selUsuarios?.value);
-
-    if (!prospectoId || !tareaId || !fecha || !hora || !duracion) {
-      showToast("warning", "Completa todos los campos obligatorios.");
-      return;
-    }
-    if (!usuarioId) {
-      showToast("warning", "Seleccioná un usuario asignado en la pestaña REUNIONES o en el filtro superior.");
-      return;
-    }
-    const btn = document.getElementById("js-cal-cli-programar");
-    btn.disabled = true;
-    try {
-      await fetchJSON("/api/calendario-asistente/reuniones", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prospecto_id: prospectoId,
-          tarea_id: tareaId,
-          usuario_id: usuarioId,
-          fecha,
-          hora_inicio: hora,
-          duracion_minutos: duracion,
-        }),
-      });
-      showToast("success", "Actividad programada correctamente.");
-      const modal = getModal("js-cal-nueva-modal");
-      if (modal) modal.hide();
-      await refreshAll();
-    } catch (err) {
-      if (err.status === 409 && err.payload) {
-        renderConflictResult(
-          "js-cal-clientes-actividades",
-          err.payload,
-          "No se pudo programar en el horario solicitado.",
-        );
-      } else {
-        showToast("error", err.message || "Error al programar.");
+    document.getElementById("js-cal-tab-reuniones-btn")?.click();
+    setTimeout(() => {
+      if (prospectoChoices) {
+        prospectoChoices.setChoiceByValue("");
+        prospectoChoices.setChoices([], "value", "label", true);
       }
-    } finally {
-      btn.disabled = false;
-    }
+    }, 250);
   }
 
-  // Autocomplete prospectos.
-  let prospectoSearchTimer = null;
-  async function onProspectoSearchInput() {
-    const q = document.getElementById("js-cal-nueva-prospecto-q").value;
-    const listEl = document.getElementById("js-cal-nueva-prospecto-results");
-    if (prospectoSearchTimer) clearTimeout(prospectoSearchTimer);
-    prospectoSearchTimer = setTimeout(async () => {
-      try {
-        const json = await fetchJSON(
-          `/api/calendario-asistente/prospectos?q=${encodeURIComponent(q)}&limit=10`,
-        );
-        const items = json.data || [];
-        if (!items.length) {
-          listEl.innerHTML = '<div class="list-group-item text-muted small">Sin resultados.</div>';
-        } else {
-          listEl.innerHTML = items
-            .map((p) => {
-              const contacto = (p.contactos || [])
-                .map((c) => [c.nombres, c.apellidos].filter(Boolean).join(" "))
-                .filter(Boolean)
-                .join(", ");
-              return `<button type="button" class="list-group-item list-group-item-action" data-id="${p.id}">
-                <div class="fw-medium">${escapeHtml(p.titulo_prospecto || "(sin título)")}</div>
-                <div class="small text-muted">
-                  <span class="badge bg-secondary-subtle text-secondary me-1">${escapeHtml(p.estado_cliente || "—")}</span>
-                  ${contacto ? `<i class="ti ti-user me-1"></i>${escapeHtml(contacto)}` : ""}
-                </div>
-              </button>`;
-            })
-            .join("");
-        }
-        listEl.classList.remove("d-none");
-        listEl.querySelectorAll("button[data-id]").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            const id = Number(btn.getAttribute("data-id"));
-            const p = items.find((x) => Number(x.id) === id);
-            if (p) selectProspecto(p);
+  // Prospecto select con Choices.js (búsqueda remota).
+  let prospectoChoices = null;
+  function initProspectoChoices() {
+    const el = document.getElementById("js-cal-nueva-prospecto");
+    if (!el || typeof Choices === "undefined") return;
+    if (prospectoChoices) prospectoChoices.destroy();
+    prospectoChoices = new Choices(el, {
+      searchEnabled: true,
+      searchPlaceholderValue: "Buscar por título, nombre o documento…",
+      itemSelectText: "",
+      noResultsText: "Sin resultados",
+      noChoicesText: "Escribe para buscar…",
+      shouldSort: false,
+      placeholder: true,
+      placeholderValue: "Buscar cliente…",
+    });
+    let timer = null;
+    el.addEventListener("search", (e) => {
+      const q = (e.detail?.value || "").trim();
+      if (timer) clearTimeout(timer);
+      if (q.length < 2) {
+        prospectoChoices.setChoices([], "value", "label", true);
+        return;
+      }
+      timer = setTimeout(async () => {
+        try {
+          const json = await fetchJSON(
+            `/api/calendario-asistente/prospectos?q=${encodeURIComponent(q)}&limit=10`,
+          );
+          const items = (json.data || []).map((p) => {
+            const contacto = (p.contactos || [])
+              .map((c) => [c.nombres, c.apellidos].filter(Boolean).join(" "))
+              .filter(Boolean)
+              .join(", ");
+            return {
+              value: String(p.id),
+              label: `${p.titulo_prospecto || "(sin título)"}${contacto ? ` — ${contacto}` : ""}`,
+              customProperties: p,
+            };
           });
-        });
-      } catch (err) {
-        console.error("[asistente-cal] prospectos search:", err);
-        listEl.innerHTML = `<div class="list-group-item text-danger small">${escapeHtml(err.message || "Error")}</div>`;
-        listEl.classList.remove("d-none");
+          prospectoChoices.setChoices(items, "value", "label", true);
+        } catch (_) {
+          // Silencio en errores de red.
+        }
+      }, 250);
+    });
+    el.addEventListener("addItem", (e) => {
+      const choice = e.detail;
+      if (!choice || !choice.value) return;
+      const p = choice?.customProperties;
+      if (p && String(p.id) === choice.value) {
+        selectProspecto(p);
+        return;
       }
-    }, 200);
+      fetchJSON(`/api/calendario-asistente/prospectos?limit=50`)
+        .then((json) => {
+          const found = (json.data || []).find((x) => String(x.id) === choice.value);
+          if (found) selectProspecto(found);
+        })
+        .catch(() => {});
+    });
   }
 
   function selectProspecto(p) {
     nuevaState.prospecto = p;
-    document.getElementById("js-cal-nueva-prospecto-q").value = p.titulo_prospecto || "";
     document.getElementById("js-cal-nueva-prospecto-id").value = String(p.id);
     const selEl = document.getElementById("js-cal-nueva-prospecto-sel");
     const contacto = (p.contactos || [])
@@ -1350,7 +1340,48 @@
       .join(", ");
     selEl.innerHTML = `<i class="ti ti-check me-1"></i>Seleccionado: <strong>${escapeHtml(p.titulo_prospecto || "")}</strong>${contacto ? ` · ${escapeHtml(contacto)}` : ""}${p.fecha_entrega ? ` · F. entrega: <strong>${escapeHtml(p.fecha_entrega)}</strong>` : ""}`;
     selEl.classList.remove("d-none");
-    document.getElementById("js-cal-nueva-prospecto-results").classList.add("d-none");
+    cargarActividadesProspecto(p.id);
+  }
+
+  async function cargarActividadesProspecto(prospectoId) {
+    const container = document.getElementById("js-cal-nueva-actividades-container");
+    const tbody = document.getElementById("js-cal-nueva-actividades-tbody");
+    try {
+      const json = await fetchJSON(`/api/calendario-asistente/prospectos/${prospectoId}/actividades`);
+      const actividades = Array.isArray(json.data) ? json.data : [];
+      if (actividades.length === 0) {
+        container.classList.add("d-none");
+        return;
+      }
+      tbody.innerHTML = actividades.map((a) => {
+        const finFecha = a.fecha_fin || a.fecha_inicio;
+        const finHora = a.hora_fin || calcularHoraFin(a.hora_inicio, a.tiempo_estimado_minutos);
+        return `<tr>
+          <td><strong>${escapeHtml(a.tarea_nombre || "")}</strong></td>
+          <td style="white-space:nowrap">${escapeHtml(formatearFecha(a.fecha_inicio))} ${escapeHtml(a.hora_inicio || "")}</td>
+          <td style="white-space:nowrap">${escapeHtml(formatearFecha(finFecha))} ${escapeHtml(finHora || "")}</td>
+        </tr>`;
+      }).join("");
+      container.classList.remove("d-none");
+    } catch {
+      container.classList.add("d-none");
+    }
+  }
+
+  function calcularHoraFin(horaInicio, minutos) {
+    if (!horaInicio || !minutos) return "";
+    const [hh, mm] = horaInicio.split(":").map(Number);
+    const totalMin = hh * 60 + mm + minutos;
+    const h = Math.floor(totalMin / 60) % 24;
+    const m = totalMin % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  }
+
+  function formatearFecha(fecha) {
+    if (!fecha) return "";
+    const [y, m, d] = fecha.split("-");
+    if (!y || !m || !d) return fecha;
+    return `${d}-${m}-${y}`;
   }
 
   async function submitNueva() {
@@ -1359,7 +1390,9 @@
     const usuarioId = Number(document.getElementById("js-cal-nueva-usuario").value);
     const fecha = document.getElementById("js-cal-nueva-fecha").value;
     const hora = document.getElementById("js-cal-nueva-hora").value;
-    const duracion = Number(document.getElementById("js-cal-nueva-duracion").value);
+    const duracion =
+      Number(document.getElementById("js-cal-nueva-duracion-h").value) * 60 +
+      Number(document.getElementById("js-cal-nueva-duracion-m").value);
     const prioridad = document.getElementById("js-cal-nueva-prioridad").value;
     const motivo = document.getElementById("js-cal-nueva-motivo").value;
     if (!prospectoId || !tareaId || !usuarioId || !fecha || !hora || !duracion) {
@@ -1630,23 +1663,83 @@
   }
 
   // -------- eliminar ------------------------------------------------
+  async function submitGuardarBloque(actividadId, horarioId, tipo) {
+    const etiqueta = tipo === "extra" ? "hora extra" : "hora libre";
+    const confirmTxt = tipo === "extra"
+      ? "El bloque se deshabilitará y las actividades siguientes ocuparán su lugar. Se guardará como hora extra pendiente."
+      : "El bloque se deshabilitará y las actividades siguientes ocuparán su lugar. Se registrará como hora libre.";
+    const modal = getModal("js-cal-event-modal");
+    if (modal) modal.hide();
+    const { isConfirmed } = await Swal.fire({
+      title: `¿Guardar como ${etiqueta}?`,
+      text: confirmTxt,
+      showCancelButton: true,
+      confirmButtonText: 'Sí, guardar',
+      cancelButtonText: 'Atrás',
+      confirmButtonColor: tipo === "extra" ? '#6c757d' : '#28a745',
+    });
+    if (!isConfirmed) {
+      if (modal) modal.show();
+      return;
+    }
+    try {
+      const json = await fetchJSON(
+        `/api/calendario-asistente/reuniones/${actividadId}/bloque/${horarioId}/guardar`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tipo }),
+        },
+      );
+      showToast("success", json.data?.mensaje || `Bloque guardado como ${etiqueta}.`);
+      await refreshAll();
+    } catch (err) {
+      showToast("error", err.message || "Error al guardar el bloque.");
+    }
+  }
+
   async function submitEliminar(actividadId) {
     const btn = document.getElementById("js-cal-btn-eliminar");
     const esReunion = btn?.dataset?.esReunion === "1";
     const etiqueta = esReunion ? "reunión" : "actividad";
-    const ok = await confirmDialog(
-      `¿Cancelar esta ${etiqueta}?`,
-      "Quedará registrada como inactiva (no se borra de la base de datos).",
-      "Sí, cancelar",
-    );
-    if (!ok) return;
+    
+    // Ocultamos el modal de Bootstrap temporalmente porque atrapa el foco
+    // y no deja escribir en el SweetAlert.
+    const modal = getModal("js-cal-event-modal");
+    if (modal) modal.hide();
+
+    const { value: motivo, isConfirmed } = await Swal.fire({
+      title: `¿Cancelar esta ${etiqueta}?`,
+      text: "Quedará registrada como inactiva. Por favor, indica el motivo de la cancelación:",
+      input: 'textarea',
+      inputPlaceholder: 'Escribe el motivo aquí...',
+      inputAttributes: {
+        'aria-label': 'Motivo de la cancelación'
+      },
+      showCancelButton: true,
+      confirmButtonText: 'Sí, cancelar',
+      cancelButtonText: 'Atrás',
+      confirmButtonColor: '#d33',
+      inputValidator: (value) => {
+        if (!value || !value.trim()) {
+          return '¡El motivo es obligatorio!'
+        }
+      }
+    });
+
+    if (!isConfirmed) {
+      // Si canceló la acción, volvemos a mostrar el modal de detalles
+      if (modal) modal.show();
+      return;
+    }
+
     try {
       await fetchJSON(`/api/calendario-asistente/reuniones/${actividadId}`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo: motivo.trim() })
       });
       showToast("success", `${etiqueta.charAt(0).toUpperCase() + etiqueta.slice(1)} cancelada.`);
-      const modal = getModal("js-cal-event-modal");
-      if (modal) modal.hide();
       await refreshAll();
     } catch (err) {
       showToast("error", err.message || "Error al cancelar.");
@@ -1721,9 +1814,198 @@
         : "");
   }
 
+  // -------- horas extras: selección + acciones ----------------------
+  let heSelected = new Set();
+
+  function actualizarHeButtons() {
+    const btnCanjear = document.getElementById("js-he-btn-canjear");
+    const btnPagar = document.getElementById("js-he-btn-pagar");
+    const selEl = document.getElementById("js-he-seleccionados");
+    const count = heSelected.size;
+    if (selEl) selEl.textContent = `${count} seleccionado${count !== 1 ? "s" : ""}`;
+    if (btnCanjear) btnCanjear.disabled = count === 0;
+    if (btnPagar) btnPagar.disabled = count === 0;
+  }
+
+  function toggleHeRowCb(id, checked) {
+    if (checked) heSelected.add(id);
+    else heSelected.delete(id);
+    actualizarHeButtons();
+  }
+
   // -------- refresh -------------------------------------------------
+  function renderTablaHorasExtras(data) {
+    const tbody = document.getElementById("js-he-tbody");
+    if (!tbody) return;
+    const totalExtra = document.getElementById("js-he-total-extra");
+    const totalLibre = document.getElementById("js-he-total-libre");
+    if (totalExtra) totalExtra.textContent = `${data.resumen.extra.count} (${data.resumen.extra.minutos} min)`;
+    if (totalLibre) totalLibre.textContent = `${data.resumen.libre.count} (${data.resumen.libre.minutos} min)`;
+    if (!data.rows.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No hay horas registradas esta semana.</td></tr>';
+      heSelected.clear();
+      actualizarHeButtons();
+      return;
+    }
+    heSelected.clear();
+    tbody.innerHTML = data.rows.map(r => {
+      const badge = r.tipo === "extra"
+        ? '<span class="badge bg-secondary">Extra</span>'
+        : '<span class="badge bg-success">Libre</span>';
+      const isExtra = r.tipo === "extra";
+      return `<tr>
+        <td><input type="checkbox" class="form-check-input he-row-cb" data-id="${r.id}" ${isExtra ? "" : "disabled"}></td>
+        <td>${escapeHtml(r.fecha)}</td>
+        <td>${escapeHtml(r.hora_inicio)}</td>
+        <td>${escapeHtml(r.hora_fin)}</td>
+        <td>${escapeHtml(r.prospecto)}</td>
+        <td>${escapeHtml(r.actividad)}</td>
+        <td>${r.minutos} min</td>
+        <td>${badge}</td>
+      </tr>`;
+    }).join('');
+    actualizarHeButtons();
+  }
+
+  // -------- horas extras: eventos ----------------------------------
+  document.getElementById("js-he-select-all")?.addEventListener("change", function () {
+    const checked = this.checked;
+    document.querySelectorAll(".he-row-cb:not(:disabled)").forEach(cb => {
+      cb.checked = checked;
+      toggleHeRowCb(Number(cb.dataset.id), checked);
+    });
+  });
+
+  document.getElementById("js-he-tbody")?.addEventListener("change", function (e) {
+    const cb = e.target.closest(".he-row-cb");
+    if (!cb) return;
+    toggleHeRowCb(Number(cb.dataset.id), cb.checked);
+  });
+
+  document.getElementById("js-he-btn-pagar")?.addEventListener("click", async function () {
+    const ids = Array.from(heSelected);
+    if (!ids.length) return;
+    const ok = await Swal.fire({
+      title: "¿Pagar horas extras?",
+      text: `Se marcarán ${ids.length} hora${ids.length !== 1 ? "s" : ""} extra${ids.length !== 1 ? "s" : ""} como pagadas.`,
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Sí, pagar",
+      cancelButtonText: "Cancelar",
+    });
+    if (!ok.isConfirmed) return;
+    try {
+      await fetchJSON("/api/calendario-asistente/horas-extras/pagar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      showToast("success", `${ids.length} hora${ids.length !== 1 ? "s" : ""} pagada${ids.length !== 1 ? "s" : ""}.`);
+      const modal = getModal("js-he-modal");
+      if (modal) modal.hide();
+      await loadResumenHorasExtras();
+    } catch (e) {
+      showToast("error", e.message || "Error al pagar horas extras.");
+    }
+  });
+
+  document.getElementById("js-he-btn-canjear")?.addEventListener("click", function () {
+    const fechaEl = document.getElementById("js-he-canje-fecha");
+    const errEl = document.getElementById("js-he-canje-error");
+    if (fechaEl) fechaEl.value = "";
+    if (errEl) errEl.classList.add("d-none");
+    const modal = new bootstrap.Modal(document.getElementById("js-he-canje-modal"));
+    modal.show();
+  });
+
+  document.getElementById("js-he-canje-aplicar")?.addEventListener("click", async function () {
+    const ids = Array.from(heSelected);
+    if (!ids.length) return;
+    const fechaEl = document.getElementById("js-he-canje-fecha");
+    const horaEl = document.getElementById("js-he-canje-hora");
+    const errEl = document.getElementById("js-he-canje-error");
+    const fecha = fechaEl?.value;
+    const hora = horaEl?.value;
+    if (!fecha) {
+      if (errEl) {
+        errEl.textContent = "Debes seleccionar una fecha.";
+        errEl.classList.remove("d-none");
+      }
+      return;
+    }
+    if (!hora) {
+      if (errEl) {
+        errEl.textContent = "Debes seleccionar una hora.";
+        errEl.classList.remove("d-none");
+      }
+      return;
+    }
+    if (errEl) errEl.classList.add("d-none");
+    const btn = this;
+    btn.disabled = true;
+    try {
+      await fetchJSON("/api/calendario-asistente/horas-extras/canjear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, fecha_destino: fecha, hora_inicio: hora }),
+      });
+      showToast("success", `${ids.length} hora${ids.length !== 1 ? "s" : ""} canjeada${ids.length !== 1 ? "s" : ""}.`);
+      const submodal = getModal("js-he-canje-modal");
+      if (submodal) submodal.hide();
+      const modal = getModal("js-he-modal");
+      if (modal) modal.hide();
+      await loadResumenHorasExtras();
+    } catch (e) {
+      showToast("error", e.message || "Error al canjear horas extras.");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  async function loadResumenHorasExtras() {
+    const uid = selUsuarios?.value;
+    if (!uid) return;
+    try {
+      const json = await fetchJSON(
+        `/api/calendario-asistente/horas-extras/resumen?usuario_id=${encodeURIComponent(uid)}`,
+      );
+      if (!json?.success) return;
+      const d = json.data;
+      const el = document.getElementById("js-horas-extras-resumen");
+      if (!el) return;
+      // Guardar data para el modal
+      el.dataset.heData = JSON.stringify(d);
+      const partes = [];
+      if (d.resumen.extra?.count > 0) {
+        partes.push(`<span class="text-secondary fw-medium"><i class="ti ti-clock-plus me-1"></i>Extra: ${d.resumen.extra.count} (${d.resumen.extra.minutos} min)</span>`);
+      }
+      if (d.resumen.libre?.count > 0) {
+        partes.push(`<span class="text-success fw-medium"><i class="ti ti-clock-off me-1"></i>Libre: ${d.resumen.libre.count} (${d.resumen.libre.minutos} min)</span>`);
+      }
+      el.innerHTML = partes.length
+        ? `<a href="#" class="text-decoration-none" data-bs-toggle="modal" data-bs-target="#js-he-modal">${partes.join(' · ')}</a>`
+        : '';
+    } catch (e) {
+      // silent
+    }
+  }
+
+  // Al abrir el modal de horas extras, renderizar la tabla
+  const heModal = document.getElementById("js-he-modal");
+  if (heModal) {
+    heModal.addEventListener("show.bs.modal", function () {
+      const el = document.getElementById("js-horas-extras-resumen");
+      const selectAll = document.getElementById("js-he-select-all");
+      if (selectAll) selectAll.checked = false;
+      if (!el?.dataset?.heData) return;
+      try {
+        renderTablaHorasExtras(JSON.parse(el.dataset.heData));
+      } catch (_) {}
+    });
+  }
+
   async function refreshAll() {
-    await Promise.all([loadReuniones(), loadCalendario()]);
+    await Promise.all([loadReuniones(), loadCalendario(), loadResumenHorasExtras()]);
   }
 
   // -------- FullCalendar --------------------------------------------
@@ -1745,6 +2027,7 @@
       initialView: "timeGridWeek",
       locale: "es",
       firstDay: 1,
+      hiddenDays: [0],
       slotMinTime: "07:00:00",
       slotMaxTime: "20:00:00",
       slotDuration: "00:15:00",
@@ -1781,11 +2064,23 @@
       },
       eventClick: function (info) {
         const id = Number(info.event.extendedProps?.actividad_id || 0);
-        if (id) openDetailModal(id);
+        const hid = Number(info.event.extendedProps?.horario_usuario_id || 0);
+        const marca = info.event.extendedProps?.marca || null;
+        if (!id && hid && marca === "permiso") {
+          // Bloque permiso: mostrar info
+          const a = info.event.extendedProps?.actividad;
+          showToast("info", `🔒 Permiso: ${a?.hora_inicio || ""} – ${a?.hora_fin || ""} (bloque fijo)`);
+        } else if (!id && hid) {
+          // Bloque sin actividad (canje/libre): mostrar detalle del canje
+          openCanjeDetailModal(hid);
+        } else if (id) {
+          openDetailModal(id, hid);
+        }
       },
       eventDrop: function (info) {
         const id = Number(info.event.extendedProps?.actividad_id || 0);
-        if (!id) {
+        const marca = info.event.extendedProps?.marca || null;
+        if (!id || marca === "permiso") {
           info.revert();
           return;
         }
@@ -1825,6 +2120,355 @@
     return cal;
   }
 
+  // -------- permisos modal ------------------------------------------
+  let permisosPreviewData = null;
+  let permisosUsuariosCache = [];
+
+  function loadPermisosUsuarios() {
+    const sel = document.getElementById("cal-pu-usuario");
+    const filtro = document.getElementById("cal-pu-filtro-usuario");
+    if (!sel) return;
+    const opts = ['<option value="">— Selecciona —</option>'];
+    const filtroOpts = ['<option value="">Todos</option>'];
+    if (selUsuarios) {
+      Array.from(selUsuarios.options).forEach((opt) => {
+        if (!opt.value) return;
+        const label = opt.textContent.trim();
+        opts.push(`<option value="${opt.value}">${escapeHtml(label)}</option>`);
+        filtroOpts.push(`<option value="${opt.value}">${escapeHtml(label)}</option>`);
+      });
+    }
+    sel.innerHTML = opts.join("");
+    filtro.innerHTML = filtroOpts.join("");
+  }
+
+  async function onClickPermisosPreview() {
+    const usuarioId = document.getElementById("cal-pu-usuario").value;
+    const fecha = document.getElementById("cal-pu-fecha").value;
+    const horaInicio = document.getElementById("cal-pu-hora-inicio").value;
+    const horaFin = document.getElementById("cal-pu-hora-fin").value;
+    if (!usuarioId || !fecha || !horaInicio || !horaFin) {
+      showToast("warning", "Completa todos los campos requeridos.");
+      return;
+    }
+    const btn = document.getElementById("cal-pu-btn-preview");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analizando…';
+    try {
+      const json = await fetchJSON(
+        `/api/calendario-asistente/permisos/preview?usuario_id=${encodeURIComponent(usuarioId)}&fecha=${encodeURIComponent(fecha)}&hora_inicio=${encodeURIComponent(horaInicio)}&hora_fin=${encodeURIComponent(horaFin)}`,
+      );
+      permisosPreviewData = json.data;
+      renderPermisosPreview(permisosPreviewData);
+      document.getElementById("cal-pu-btn-crear").disabled = false;
+    } catch (e) {
+      showToast("error", "Error en preview: " + e.message);
+      document.getElementById("cal-pu-preview-content").innerHTML = "";
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="ti ti-eye me-1"></i>Vista previa';
+    }
+  }
+
+  function renderPermisosPreview(data) {
+    const content = document.getElementById("cal-pu-preview-content");
+    if (!data) { content.innerHTML = ""; return; }
+    const paramsHTML = `<p class="mb-1 small"><strong>${escapeHtml(data.fecha)}</strong> ${escapeHtml(data.hora_inicio)} – ${escapeHtml(data.hora_fin)}</p>`;
+    if (!data.actividades?.length) {
+      content.innerHTML = paramsHTML + '<div class="alert alert-success py-1 mb-0 small"><i class="ti ti-check me-1"></i>No hay actividades en este rango.</div>';
+      return;
+    }
+    const urgentes = data.urgentes || [];
+    const movibles = (data.actividades || []).filter(a => a.prioridad !== "ALTA" && !a.bloqueada);
+    const noMovibles = data.no_movibles || [];
+    let html = paramsHTML + `<div class="mb-1 small"><strong>Total:</strong> ${data.actividades.length}</div>`;
+    if (urgentes.length) {
+      html += `<div class="alert alert-warning py-1 px-2 mb-1 small"><i class="ti ti-alert-triangle me-1"></i><strong>${urgentes.length} urgente(s)</strong> — no se moverán<ul class="mb-0 mt-1 ps-3">`;
+      urgentes.forEach(a => html += `<li>${escapeHtml(a.tarea_nombre || "—")} — ${escapeHtml(a.titulo_prospecto || "—")}</li>`);
+      html += "</ul></div>";
+    }
+    if (movibles.length) {
+      html += `<div class="alert alert-info py-1 px-2 mb-1 small"><i class="ti ti-arrows-shuffle me-1"></i><strong>${movibles.length} reprogramable(s)</strong><ul class="mb-0 mt-1 ps-3">`;
+      movibles.forEach(a => html += `<li>${escapeHtml(a.tarea_nombre || "—")} — ${escapeHtml(a.titulo_prospecto || "—")} (${escapeHtml(a.hora_inicio)}–${escapeHtml(a.hora_fin)})</li>`);
+      html += "</ul></div>";
+    }
+    if (noMovibles.length) {
+      html += `<div class="alert alert-danger py-1 px-2 mb-1 small"><i class="ti ti-x me-1"></i><strong>${noMovibles.length} no movible(s)</strong><ul class="mb-0 mt-1 ps-3">`;
+      noMovibles.forEach(a => html += `<li>${escapeHtml(a.tarea_nombre || "—")} — ${escapeHtml(a.titulo_prospecto || "—")} (${escapeHtml(a.motivo || "")})</li>`);
+      html += "</ul></div>";
+    }
+    content.innerHTML = html;
+  }
+
+  async function onClickPermisosCrear() {
+    const usuarioId = document.getElementById("cal-pu-usuario").value;
+    const fecha = document.getElementById("cal-pu-fecha").value;
+    const horaInicio = document.getElementById("cal-pu-hora-inicio").value;
+    const horaFin = document.getElementById("cal-pu-hora-fin").value;
+    const motivo = document.getElementById("cal-pu-motivo").value;
+    if (!usuarioId || !fecha || !horaInicio || !horaFin) {
+      showToast("warning", "Completa todos los campos requeridos.");
+      return;
+    }
+    const ok = await confirmDialog("¿Crear permiso?", "Se reprogramarán las actividades automáticamente.", "Sí, crear");
+    if (!ok) return;
+    const btn = document.getElementById("cal-pu-btn-crear");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando…';
+    try {
+      const json = await fetchJSON("/api/calendario-asistente/permisos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usuario_id: Number(usuarioId), fecha, hora_inicio: horaInicio, hora_fin: horaFin, motivo }),
+      });
+      renderPermisoResultado(json.data);
+      cargarPermisosList();
+      document.getElementById("cal-pu-motivo").value = "";
+      document.getElementById("cal-pu-btn-crear").disabled = true;
+      document.getElementById("cal-pu-preview-content").innerHTML = "";
+    } catch (e) {
+      showToast("error", "Error al crear permiso: " + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="ti ti-lock me-1"></i>Crear permiso y reprogramar';
+    }
+  }
+
+  function renderPermisoResultado(data) {
+    const content = document.getElementById("cal-pu-crear-content");
+    if (!data) { content.innerHTML = ""; return; }
+    let html = `<div class="alert alert-success py-2 mb-0 small"><i class="ti ti-check me-1"></i>Permiso creado.</div>`;
+    if (data.urgentes?.length) {
+      html += `<div class="alert alert-warning py-1 px-2 mb-1 small"><i class="ti ti-alert-triangle me-1"></i><strong>${data.urgentes.length} urgente(s) no movidas</strong><ul class="mb-0 mt-1 ps-3">`;
+      data.urgentes.forEach(a => html += `<li>${escapeHtml(a.tarea_nombre || "—")} — ${escapeHtml(a.titulo_prospecto || "—")}</li>`);
+      html += "</ul></div>";
+    }
+    if (data.reprogramadas?.length) {
+      html += `<div class="alert alert-success py-1 px-2 mb-1 small"><i class="ti ti-check me-1"></i><strong>${data.reprogramadas.length} reprogramada(s)</strong><ul class="mb-0 mt-1 ps-3">`;
+      data.reprogramadas.forEach(a => html += `<li>${escapeHtml(a.tarea_nombre || "—")} — ${escapeHtml(a.titulo_prospecto || "—")}: ${escapeHtml(a.fecha_origen)} ${escapeHtml(a.hora_origen)} → <strong>${escapeHtml(a.fecha_destino)} ${escapeHtml(a.hora_destino)}</strong></li>`);
+      html += "</ul></div>";
+    }
+    if (data.no_movibles?.length) {
+      html += `<div class="alert alert-danger py-1 px-2 mb-1 small"><i class="ti ti-x me-1"></i><strong>${data.no_movibles.length} no movible(s)</strong><ul class="mb-0 mt-1 ps-3">`;
+      data.no_movibles.forEach(a => html += `<li>${escapeHtml(a.tarea_nombre || "—")} — ${escapeHtml(a.titulo_prospecto || "—")} (${escapeHtml(a.motivo || "")})</li>`);
+      html += "</ul></div>";
+    }
+    content.innerHTML = html;
+  }
+
+  async function cargarPermisosList() {
+    const filtro = document.getElementById("cal-pu-filtro-usuario")?.value || "";
+    let url = "/api/calendario-asistente/permisos";
+    if (filtro) url += "?usuario_id=" + encodeURIComponent(filtro);
+    try {
+      const json = await fetchJSON(url);
+      renderPermisosList(json.data || []);
+    } catch (e) {
+      showToast("error", "Error al cargar permisos: " + e.message);
+    }
+  }
+
+  function renderPermisosList(permisos) {
+    const tbody = document.getElementById("cal-pu-tbody");
+    const empty = document.getElementById("cal-pu-empty");
+    if (!tbody) return;
+    if (!permisos.length) {
+      tbody.innerHTML = "";
+      if (empty) empty.classList.remove("d-none");
+      return;
+    }
+    if (empty) empty.classList.add("d-none");
+    tbody.innerHTML = permisos.map(p => `<tr>
+      <td>${escapeHtml(p.usuario_persona || p.usuario_nombre || "—")}</td>
+      <td>${escapeHtml(p.fecha || "—")}</td>
+      <td>${escapeHtml(p.hora_inicio || "—")}</td>
+      <td>${escapeHtml(p.hora_fin || "—")}</td>
+      <td>${escapeHtml(p.motivo || "—")}</td>
+      <td><button class="btn btn-sm btn-outline-danger cal-pu-btn-eliminar" data-id="${p.id}"><i class="ti ti-trash"></i></button></td>
+    </tr>`).join("");
+    tbody.querySelectorAll(".cal-pu-btn-eliminar").forEach(btn => {
+      btn.addEventListener("click", () => onClickPermisoEliminar(btn.dataset.id));
+    });
+  }
+
+  async function onClickPermisoEliminar(id) {
+    if (!await confirmDialog("¿Eliminar permiso?", "Se restaurará el horario anterior.")) return;
+    try {
+      await fetchJSON(`/api/calendario-asistente/permisos/${id}`, { method: "DELETE" });
+      showToast("success", "Permiso eliminado.");
+      cargarPermisosList();
+    } catch (e) {
+      showToast("error", "Error al eliminar permiso: " + e.message);
+    }
+  }
+
+  // -------- ausencias modal -----------------------------------------
+  let ausenciasPreviewData = [];
+
+  function openAusenciasModal() {
+    const modal = getModal("js-cal-ausencias-modal");
+    if (!modal) return;
+    const sel = document.getElementById("cal-au-usuario");
+    // Poblar el select con los mismos usuarios del header
+    sel.innerHTML = '<option value="">— Selecciona —</option>';
+    if (selUsuarios) {
+      Array.from(selUsuarios.options).forEach(opt => {
+        if (!opt.value) return;
+        sel.innerHTML += `<option value="${opt.value}">${escapeHtml(opt.textContent.trim())}</option>`;
+      });
+    }
+    const uid = selUsuarios?.value || "";
+    if (uid) sel.value = uid;
+    sel.disabled = false;
+    document.getElementById("cal-au-fecha-desde").value = "";
+    document.getElementById("cal-au-fecha-hasta").value = "";
+    document.getElementById("cal-au-motivo").value = "";
+    document.getElementById("cal-au-preview-status").textContent = "";
+    document.getElementById("cal-au-actividades-wrap").classList.add("d-none");
+    document.getElementById("cal-au-urgentes-warning").classList.add("d-none");
+    document.getElementById("cal-au-result").innerHTML = "";
+    document.getElementById("cal-au-btn-ejecutar").disabled = true;
+    ausenciasPreviewData = [];
+    modal.show();
+  }
+
+  async function submitPreviewAusencia() {
+    const uid = Number(selUsuarios?.value) || Number(document.getElementById("cal-au-usuario").value);
+    const fechaDesde = document.getElementById("cal-au-fecha-desde").value;
+    const fechaHasta = document.getElementById("cal-au-fecha-hasta").value;
+    if (!uid) { showToast("warning", "Seleccioná un usuario."); return; }
+    if (!fechaDesde || !fechaHasta) { showToast("warning", "Completá las fechas."); return; }
+    if (fechaDesde > fechaHasta) { showToast("warning", "'Desde' debe ser anterior a 'Hasta'."); return; }
+    const statusEl = document.getElementById("cal-au-preview-status");
+    if (statusEl) statusEl.textContent = "Consultando…";
+    try {
+      const json = await fetchJSON(
+        `/api/calendario-asistente/permisos/ausencias/preview?usuario_id=${uid}&fecha_desde=${encodeURIComponent(fechaDesde)}&fecha_hasta=${encodeURIComponent(fechaHasta)}`,
+      );
+      ausenciasPreviewData = json.data || [];
+      if (statusEl) statusEl.textContent = `${ausenciasPreviewData.length} actividad(es) encontradas.`;
+      renderAusenciaPreview(ausenciasPreviewData);
+    } catch (err) {
+      if (statusEl) statusEl.textContent = "Error";
+      showToast("error", err.message || "Error en preview.");
+    }
+  }
+
+  function renderAusenciaPreview(actividades) {
+    const wrap = document.getElementById("cal-au-actividades-wrap");
+    const tbody = document.getElementById("cal-au-tbody");
+    const countEl = document.getElementById("cal-au-actividades-count");
+    const warning = document.getElementById("cal-au-urgentes-warning");
+    const btnEjecutar = document.getElementById("cal-au-btn-ejecutar");
+    if (!wrap || !tbody) return;
+    if (!actividades.length) { wrap.classList.add("d-none"); return; }
+    wrap.classList.remove("d-none");
+    if (countEl) countEl.textContent = String(actividades.length);
+    const tieneUrgente = actividades.some(a => a.prioridad === "ALTA" || a.bloqueada);
+    warning.classList.toggle("d-none", !tieneUrgente);
+    tbody.innerHTML = actividades.map((a, i) => {
+      const esUrgente = a.prioridad === "ALTA" || a.bloqueada;
+      const prioBadge = a.prioridad === "ALTA" ? '<span class="badge bg-danger-subtle text-danger">ALTA</span>' : a.prioridad === "MEDIA" ? '<span class="badge bg-warning-subtle text-warning">MEDIA</span>' : '<span class="badge bg-secondary-subtle text-secondary">BAJA</span>';
+      const bloqueadaTag = a.bloqueada ? '<span class="badge bg-dark text-white ms-1">Bloqueada</span>' : "";
+      return `<tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(a.titulo_prospecto || "—")}</td>
+        <td>${escapeHtml(a.tarea_nombre || "—")}</td>
+        <td>${escapeHtml(a.fecha)}</td>
+        <td>${escapeHtml(a.hora_inicio)}</td>
+        <td>${prioBadge}${bloqueadaTag}</td>
+        <td>${escapeHtml(a.fecha_entrega || "—")}</td>
+        <td>
+          <select class="form-select form-select-sm cal-au-accion" data-actividad-id="${a.actividad_id}">
+            <option value="reasignar">Reasignar</option>
+            <option value="bono"${esUrgente ? " selected" : ""}>Pasar a bono</option>
+          </select>
+          <div class="cal-au-usuario-destino-wrap" style="margin-top:4px;${esUrgente ? "display:none" : ""}">
+            <select class="form-select form-select-sm cal-au-usuario-destino" data-actividad-id="${a.actividad_id}">
+              <option value="">Cambiar usuario…</option>
+            </select>
+          </div>
+        </td>
+      </tr>`;
+    }).join("");
+    const destSelects = tbody.querySelectorAll(".cal-au-usuario-destino");
+    if (selUsuarios) {
+      Array.from(selUsuarios.options).forEach(opt => {
+        if (!opt.value) return;
+        const label = opt.textContent.trim();
+        destSelects.forEach(sel => { sel.innerHTML += `<option value="${opt.value}">${escapeHtml(label)}</option>`; });
+      });
+    }
+    tbody.querySelectorAll(".cal-au-accion").forEach(sel => {
+      sel.addEventListener("change", function () {
+        const row = this.closest("tr");
+        const w = row?.querySelector(".cal-au-usuario-destino-wrap");
+        if (w) w.style.display = this.value === "reasignar" ? "" : "none";
+      });
+    });
+    if (btnEjecutar) btnEjecutar.disabled = false;
+  }
+
+  async function submitEjecutarAusencia() {
+    const uid = Number(selUsuarios?.value) || Number(document.getElementById("cal-au-usuario").value);
+    const fechaDesde = document.getElementById("cal-au-fecha-desde").value;
+    const fechaHasta = document.getElementById("cal-au-fecha-hasta").value;
+    const motivo = document.getElementById("cal-au-motivo").value || "Ausencia";
+    if (!uid || !fechaDesde || !fechaHasta) { showToast("warning", "Completá todos los campos."); return; }
+    const tbody = document.getElementById("cal-au-tbody");
+    const acciones = [];
+    tbody?.querySelectorAll(".cal-au-accion").forEach(sel => {
+      const actividadId = Number(sel.dataset.actividadId);
+      if (!actividadId) return;
+      const acc = { actividad_id: actividadId, accion: sel.value };
+      if (sel.value === "reasignar") {
+        const row = sel.closest("tr");
+        const destSel = row?.querySelector(".cal-au-usuario-destino");
+        const destinoId = Number(destSel?.value || 0);
+        if (destinoId) acc.usuario_destino_id = destinoId;
+      }
+      acciones.push(acc);
+    });
+    if (!acciones.length) { showToast("warning", "No hay actividades."); return; }
+    const ok = await confirmDialog("¿Ejecutar ausencia?", `Se procesarán ${acciones.length} actividad(es).`, "Sí, ejecutar");
+    if (!ok) return;
+    const btnEjecutar = document.getElementById("cal-au-btn-ejecutar");
+    if (btnEjecutar) btnEjecutar.disabled = true;
+    try {
+      const json = await fetchJSON("/api/calendario-asistente/permisos/ausencias/ejecutar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usuario_id: uid, fecha_desde: fechaDesde, fecha_hasta: fechaHasta, motivo, acciones }),
+      });
+      const data = json.data || {};
+      const resultEl = document.getElementById("cal-au-result");
+      const partes = [];
+      if (data.reasignadas?.length) partes.push(`<span class="text-success fw-semibold">${data.reasignadas.length} reasignada(s)</span>`);
+      if (data.bonos?.length) {
+        const bonosReales = data.bonos.filter(b => b.tipo !== "bono_auto");
+        const bonosAuto = data.bonos.filter(b => b.tipo === "bono_auto");
+        if (bonosReales.length) partes.push(`<span class="text-secondary">${bonosReales.length} a bono</span>`);
+        if (bonosAuto.length) partes.push(`<span class="text-warning">${bonosAuto.length} pasaron a bono (no caben antes del deadline)</span>`);
+      }
+      if (data.errores?.length) partes.push(`<span class="text-danger">${data.errores.length} error(es)</span>`);
+      if (resultEl) {
+        resultEl.innerHTML = `<div class="alert alert-success py-2 mb-0"><i class="ti ti-check me-1"></i> Ausencia ejecutada.<br><small>${partes.length ? partes.join(" · ") : "Sin cambios."}</small></div>`;
+      }
+      showToast("success", "Ausencia ejecutada.");
+      setTimeout(async () => {
+        const modal = getModal("js-cal-ausencias-modal");
+        if (modal) modal.hide();
+        await refreshAll();
+      }, 2000);
+    } catch (err) {
+      const resultEl = document.getElementById("cal-au-result");
+      if (resultEl) resultEl.innerHTML = `<div class="alert alert-danger py-2 mb-0">${escapeHtml(err.message || "Error")}</div>`;
+      showToast("error", err.message || "Error al ejecutar ausencia.");
+    } finally {
+      if (btnEjecutar) btnEjecutar.disabled = false;
+    }
+  }
+
   // -------- init ----------------------------------------------------
   document.addEventListener("DOMContentLoaded", function () {
     // Mover todos los modales de la página a <body> para evitar que
@@ -1836,6 +2480,7 @@
     });
     loadUsuarios();
     loadReuniones();
+    loadResumenHorasExtras();
     initCalendar();
     // Delegación de clics en sidebar (se adjunta UNA vez en init).
     if (listReuniones) {
@@ -1851,6 +2496,7 @@
     if (selUsuarios) {
       selUsuarios.addEventListener("change", function () {
         loadCalendario();
+        loadResumenHorasExtras();
       });
     }
     // Cuando el modal "Agregar cliente" termina de guardar, el módulo
@@ -1906,6 +2552,22 @@
         if (!id) return;
         submitEliminar(id);
       });
+    document
+      .getElementById("js-cal-btn-hora-extra")
+      ?.addEventListener("click", function () {
+        const id = Number(this.dataset.actividadId || 0);
+        const hid = Number(this.dataset.horarioId || 0);
+        if (!id || !hid) return;
+        submitGuardarBloque(id, hid, "extra");
+      });
+    document
+      .getElementById("js-cal-btn-hora-libre")
+      ?.addEventListener("click", function () {
+        const id = Number(this.dataset.actividadId || 0);
+        const hid = Number(this.dataset.horarioId || 0);
+        if (!id || !hid) return;
+        submitGuardarBloque(id, hid, "libre");
+      });
     // Reprogramar.
     document
       .getElementById("js-cal-rep-aplicar")
@@ -1937,12 +2599,7 @@
       .getElementById("js-cal-rea-aplicar")
       ?.addEventListener("click", submitReasignar);
     // Nueva.
-    document
-      .getElementById("js-cal-nueva-prospecto-q")
-      ?.addEventListener("input", onProspectoSearchInput);
-    document
-      .getElementById("js-cal-nueva-prospecto-q")
-      ?.addEventListener("focus", onProspectoSearchInput);
+    initProspectoChoices();
     document
       .getElementById("js-cal-nueva-aplicar")
       ?.addEventListener("click", submitNueva);
@@ -1962,33 +2619,41 @@
       .getElementById("js-cal-prog-aplicar")
       ?.addEventListener("click", submitProgramar);
     // CLIENTES tab: select change + refresh.
-    document
-      .getElementById("js-cal-clientes-select")
-      ?.addEventListener("change", onClienteSelect);
-    document
-      .getElementById("js-cal-clientes-refresh")
-      ?.addEventListener("click", function () {
-        cargarClientesConActividades();
-      });
     // Mostrar/ocultar el botón "Crear reunión" según el tab activo
     const btnCrearFooter = document.getElementById("js-cal-nueva-aplicar");
-    document.getElementById("js-cal-tab-clientes-btn")?.addEventListener("click", function () {
-      if (btnCrearFooter) btnCrearFooter.style.display = "none";
-    });
     document.getElementById("js-cal-tab-agregar-cliente-btn")?.addEventListener("click", function () {
       if (btnCrearFooter) btnCrearFooter.style.display = "none";
     });
     document.getElementById("js-cal-tab-reuniones-btn")?.addEventListener("click", function () {
       if (btnCrearFooter) btnCrearFooter.style.display = "";
     });
-    // Cuando se muestra el tab CLIENTES, cargar datos si es primera vez.
-    const clientesTab = document.getElementById("js-cal-tab-clientes");
-    if (clientesTab) {
-      clientesTab.addEventListener("show.bs.tab", function () {
-        if (!todosClientes.length) {
-          cargarClientesConActividades();
-        }
+    // Permisos modal
+    const btnPermisos = document.getElementById("js-cal-btn-permisos");
+    if (btnPermisos) {
+      btnPermisos.addEventListener("click", function () {
+        loadPermisosUsuarios();
+        cargarPermisosList();
+        document.getElementById("cal-pu-preview-content").innerHTML = "";
+        document.getElementById("cal-pu-crear-content").innerHTML = "";
+        document.getElementById("cal-pu-btn-crear").disabled = true;
+        const modal = getModal("js-cal-permisos-modal");
+        if (modal) modal.show();
       });
     }
+    document.getElementById("cal-pu-btn-preview")?.addEventListener("click", onClickPermisosPreview);
+    document.getElementById("cal-pu-btn-crear")?.addEventListener("click", onClickPermisosCrear);
+    document.getElementById("cal-pu-filtro-usuario")?.addEventListener("change", cargarPermisosList);
+    // Ausencias modal
+    const btnAusencias = document.getElementById("js-cal-btn-ausencias");
+    if (selUsuarios) {
+      selUsuarios.addEventListener("change", function () {
+        if (btnAusencias) btnAusencias.disabled = !this.value;
+      });
+    }
+    if (btnAusencias) {
+      btnAusencias.addEventListener("click", openAusenciasModal);
+    }
+    document.getElementById("cal-au-btn-preview")?.addEventListener("click", submitPreviewAusencia);
+    document.getElementById("cal-au-btn-ejecutar")?.addEventListener("click", submitEjecutarAusencia);
   });
 })();

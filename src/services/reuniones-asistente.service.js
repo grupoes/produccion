@@ -87,6 +87,13 @@ const fmtLocalDate = (d) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+// Para columnas @db.Date en Prisma (sin timezone), el Date siempre está en
+// UTC. Usar UTC getters evita el desfase de un día en husos negativos.
+const fmtUTCDate = (d) => {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+};
+
 // "HH:MM" o "HH:MM:SS" → Date 1970-01-01Thh:mm:ss UTC. Usamos Date.UTC
 // (no el constructor local) para que la columna @db.Timetz almacene la
 // hora EXACTA que recibimos del front, sin que el huso horario del
@@ -249,11 +256,17 @@ class ReunionesAsistenteService {
                'estado_progreso', a.estado_progreso,
                'tiempo_estimado_minutos', a.tiempo_estimado_minutos,
                'usuario_id', a.usuario_id,
-               'tiene_slot', EXISTS(
-                 SELECT 1 FROM horario_usuario hu
-                 WHERE hu.actividad_id = a.id AND hu.estado = true
-               )
-             ) ORDER BY a.created_at DESC
+                'fecha_inicio', TO_CHAR(a.fecha_inicio, 'YYYY-MM-DD'),
+                'hora_inicio', TO_CHAR(a.hora_inicio, 'HH24:MI'),
+                'tiene_slot', EXISTS(
+                  SELECT 1 FROM horario_usuario hu
+                  WHERE hu.actividad_id = a.id AND hu.estado = true
+                ),
+                'es_canjeado_libre', EXISTS(
+                  SELECT 1 FROM horario_usuario hu2
+                  WHERE hu2.actividad_id = a.id AND hu2.marca IN ('canje','libre')
+                )
+              ) ORDER BY a.created_at DESC
            )
            FROM actividades a
            LEFT JOIN tarea t ON t.id = a.tarea_id
@@ -288,6 +301,9 @@ class ReunionesAsistenteService {
             : null,
           usuario_id: a.usuario_id ? Number(a.usuario_id) : null,
           tiene_slot: Boolean(a.tiene_slot),
+          fecha_inicio: a.fecha_inicio || null,
+          hora_inicio: a.hora_inicio || null,
+          es_canjeado_libre: Boolean(a.es_canjeado_libre),
         })),
     }));
   }
@@ -329,21 +345,35 @@ class ReunionesAsistenteService {
         },
         horario_usuario: {
           where: { estado: true },
-          orderBy: { id: "desc" },
-          take: 1,
+          orderBy: [{ fecha: "asc" }, { hora_inicio: "asc" }],
           select: {
             id: true,
             fecha: true,
             hora_inicio: true,
             hora_fin: true,
             duracion_minutos: true,
+            marca: true,
           },
         },
       },
     });
     if (!a) return null;
 
-    const slot = a.horario_usuario?.[0] || null;
+    const bloques = a.horario_usuario || [];
+    const slot = bloques.length > 0 ? bloques[0] : null;
+    const globalInicio = bloques.length > 0
+      ? {
+          fecha: bloques[0].fecha,
+          hora_inicio: bloques[0].hora_inicio,
+        }
+      : null;
+    const globalTermino = bloques.length > 0
+      ? {
+          fecha: bloques[bloques.length - 1].fecha,
+          hora_fin: bloques[bloques.length - 1].hora_fin,
+        }
+      : null;
+    const totalMinutosReales = bloques.reduce((acc, b) => acc + (Number(b.duracion_minutos) || 0), 0);
     const tt = a.tarea?.tipo_tarea_tarea_tipo_tareaTotipo_tarea || null;
     const contactos = (a.prospectos?.prospecto_persona || [])
       .map((pp) => pp.personas)
@@ -450,7 +480,7 @@ class ReunionesAsistenteService {
             id: slot.id,
             fecha: slot.fecha
               ? (slot.fecha instanceof Date
-                  ? fmtLocalDate(slot.fecha)
+                  ? fmtUTCDate(slot.fecha)
                   : String(slot.fecha).slice(0, 10))
               : null,
             hora_inicio: slot.hora_inicio
@@ -462,6 +492,47 @@ class ReunionesAsistenteService {
             duracion_minutos: slot.duracion_minutos || null,
           }
         : null,
+      bloques: bloques.map((b) => ({
+        id: b.id,
+        fecha: b.fecha
+          ? (b.fecha instanceof Date
+              ? fmtUTCDate(b.fecha)
+              : String(b.fecha).slice(0, 10))
+          : null,
+        hora_inicio: b.hora_inicio
+          ? minToHHMM(hmsToMin(b.hora_inicio) ?? 0)
+          : null,
+        hora_fin: b.hora_fin
+          ? minToHHMM(hmsToMin(b.hora_fin) ?? 0)
+          : null,
+        duracion_minutos: b.duracion_minutos || null,
+        marca: b.marca || null,
+      })),
+      global_inicio: globalInicio
+        ? {
+            fecha: globalInicio.fecha
+              ? (globalInicio.fecha instanceof Date
+                  ? fmtUTCDate(globalInicio.fecha)
+                  : String(globalInicio.fecha).slice(0, 10))
+              : null,
+            hora: globalInicio.hora_inicio
+              ? minToHHMM(hmsToMin(globalInicio.hora_inicio) ?? 0)
+              : null,
+          }
+        : null,
+      global_termino: globalTermino
+        ? {
+            fecha: globalTermino.fecha
+              ? (globalTermino.fecha instanceof Date
+                  ? fmtUTCDate(globalTermino.fecha)
+                  : String(globalTermino.fecha).slice(0, 10))
+              : null,
+            hora: globalTermino.hora_fin
+              ? minToHHMM(hmsToMin(globalTermino.hora_fin) ?? 0)
+              : null,
+          }
+        : null,
+      total_minutos_reales: totalMinutosReales || null,
       registrado_por,
     };
   }
@@ -2692,7 +2763,7 @@ class ReunionesAsistenteService {
   // -----------------------------------------------------------------------
   // Eliminar (baja lógica en actividades + horario_usuario)
   // -----------------------------------------------------------------------
-  async eliminarReunion({ actividadId }) {
+  async eliminarReunion({ actividadId, motivo }) {
     const id = Number(actividadId);
     if (!id) {
       const e = new Error("actividad_id requerido.");
@@ -2762,7 +2833,12 @@ class ReunionesAsistenteService {
     const result = await prisma.$transaction(async (tx) => {
       await tx.actividades.update({
         where: { id },
-        data: { estado: false, estado_progreso: "cancelada", updated_at: new Date() },
+        data: { 
+          estado: false, 
+          estado_progreso: "cancelada", 
+          motivo_reprograma: motivo || null,
+          updated_at: new Date() 
+        },
       });
       const huRes = await tx.horario_usuario.updateMany({
         where: { actividad_id: id, estado: true },
@@ -2933,6 +3009,189 @@ class ReunionesAsistenteService {
     }
 
     return result;
+  }
+
+  // -----------------------------------------------------------------------
+  // Guardar bloque como hora extra / hora libre
+  // -----------------------------------------------------------------------
+  // Deshabilita el bloque, crea un registro en horas_extras y corre
+  // rebalanceUsuario para que las actividades siguientes ocupen el hueco.
+  async guardarBloque({ actividadId, horarioId, tipo, asistenteId }) {
+    const id = Number(actividadId);
+    const hid = Number(horarioId);
+    if (!id || !hid) {
+      const e = new Error("actividad_id y horario_id requeridos.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+    if (!["extra", "libre"].includes(tipo)) {
+      const e = new Error('tipo debe ser "extra" o "libre".');
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    const act = await prisma.actividades.findUnique({
+      where: { id },
+      select: { id: true, estado: true, estado_progreso: true, usuario_id: true },
+    });
+    if (!act) {
+      const e = new Error("La actividad no existe.");
+      e.code = "NOT_FOUND";
+      throw e;
+    }
+    if (!act.estado) {
+      const e = new Error("La actividad está cancelada.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+    if (String(act.estado_progreso || "").toLowerCase() === "en_progreso") {
+      const e = new Error("No se puede guardar un bloque de una actividad en progreso.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    const bloque = await prisma.horario_usuario.findUnique({
+      where: { id: hid },
+      select: { id: true, actividad_id: true, usuario_id: true, fecha: true, hora_inicio: true, hora_fin: true, duracion_minutos: true, estado: true },
+    });
+    if (!bloque) {
+      const e = new Error("El bloque de horario no existe.");
+      e.code = "NOT_FOUND";
+      throw e;
+    }
+    if (Number(bloque.actividad_id) !== id) {
+      const e = new Error("El bloque no pertenece a esta actividad.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+    if (!bloque.estado) {
+      const e = new Error("El bloque ya está deshabilitado.");
+      e.code = "CONFLICT";
+      throw e;
+    }
+
+    const uid = Number(bloque.usuario_id || act.usuario_id);
+    if (!uid) {
+      const e = new Error("No se pudo determinar el usuario del bloque.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    // Fecha como string YYYY-MM-DD
+    const fechaRow = await prisma.$queryRawUnsafe(
+      `SELECT TO_CHAR($1::date, 'YYYY-MM-DD') AS f`,
+      bloque.fecha,
+    );
+    const fechaStr = fechaRow?.[0]?.f;
+    if (!fechaStr) {
+      const e = new Error("No se pudo determinar la fecha del bloque.");
+      e.code = "NOT_FOUND";
+      throw e;
+    }
+
+    const minutos = String(Math.round(Number(bloque.duracion_minutos) || 0));
+    const esLibre = tipo === "libre";
+
+    const result = await prisma.$transaction(async (tx) => {
+      if (esLibre) {
+        // Libre: solo marca el bloque, no lo deshabilita
+        await tx.horario_usuario.update({
+          where: { id: hid },
+          data: { marca: "libre", updated_at: new Date() },
+        });
+      } else {
+        // Extra: deshabilita el bloque (libera el espacio)
+        await tx.horario_usuario.update({
+          where: { id: hid },
+          data: { estado: false, updated_at: new Date() },
+        });
+      }
+
+      const he = await tx.horas_extras.create({
+        data: {
+          actividades: { connect: { id } },
+          usuarios: { connect: { id: uid } },
+          horario_id: hid,
+          fecha: new Date(fechaStr),
+          minutos,
+          tipo,
+          estado: "pendiente",
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      });
+
+      return { horas_extra_id: he.id };
+    });
+
+    // Rebalance solo para hora extra (el bloque se deshabilitó)
+    if (!esLibre && uid && fechaStr) {
+      try {
+        console.log(`[guardarBloque] rebalance desde ${fechaStr} tras guardar ${tipo}`);
+        await this.rebalanceUsuario(uid, fechaStr, {
+          ignorarActividadId: id,
+          motivo: `Rebalance post-guardar ${tipo}`,
+          fillFreeSlots: false,
+        });
+      } catch (e) {
+        console.error("[guardarBloque] rebalance error:", e?.message || e);
+      }
+    }
+
+    return {
+      mensaje: esLibre
+        ? "Bloque marcado como hora libre."
+        : `Bloque guardado como hora ${tipo}.`,
+      ...result,
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // Actividades de un prospecto (para la tabla en AGREGAR CLIENTE)
+  // -----------------------------------------------------------------------
+  async getActividadesByProspectoId(prospectoId) {
+    const id = Number(prospectoId);
+    if (!id) return [];
+
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT
+         a.id,
+         a.tarea_id,
+         t.nombre AS tarea_nombre,
+         a.estado_progreso,
+         a.tiempo_estimado_minutos,
+         a.usuario_id,
+         TO_CHAR(a.fecha_inicio, 'YYYY-MM-DD') AS fecha_inicio,
+         TO_CHAR(a.hora_inicio::time, 'HH24:MI') AS hora_inicio,
+         TO_CHAR(hu.fecha, 'YYYY-MM-DD') AS fecha_fin,
+         TO_CHAR(hu.hora_fin::time, 'HH24:MI') AS hora_fin
+       FROM actividades a
+       LEFT JOIN tarea t ON t.id = a.tarea_id
+       LEFT JOIN LATERAL (
+         SELECT hu2.fecha, hu2.hora_fin
+           FROM horario_usuario hu2
+          WHERE hu2.actividad_id = a.id AND hu2.estado = true
+          ORDER BY hu2.id DESC
+          LIMIT 1
+       ) hu ON true
+       WHERE a.prospecto_id = $1 AND a.estado = true
+         AND (a.estado_progreso IS NULL OR a.estado_progreso NOT IN ('completada','cancelada'))
+       ORDER BY a.created_at DESC`,
+      id,
+    );
+
+    return (rows || []).map((r) => ({
+      id: Number(r.id),
+      tarea_id: r.tarea_id ? Number(r.tarea_id) : null,
+      tarea_nombre: r.tarea_nombre || null,
+      estado_progreso: r.estado_progreso || null,
+      tiempo_estimado_minutos: r.tiempo_estimado_minutos ? Number(r.tiempo_estimado_minutos) : null,
+      usuario_id: r.usuario_id ? Number(r.usuario_id) : null,
+      fecha_inicio: r.fecha_inicio || null,
+      hora_inicio: r.hora_inicio || null,
+      fecha_fin: r.fecha_fin || null,
+      hora_fin: r.hora_fin || null,
+    }));
   }
 }
 

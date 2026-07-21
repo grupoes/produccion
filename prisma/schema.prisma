@@ -163,20 +163,27 @@ model horario_usuario {
   tipo             String?      @db.VarChar(20)
   orden            Int?
   categoria        String?      @db.VarChar(50)
+  marca            String?      @db.VarChar(20)
   actividades      actividades? @relation(fields: [actividad_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_actividad")
   usuarios         usuarios?    @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_usuario_horario")
+  horas_extras_canje            horas_extras[] @relation("canje_horario")
 }
 
 model horas_extras {
-  id           Int          @id @default(autoincrement())
-  actividad_id Int?
-  usuario_id   Int?
-  fecha        DateTime?    @db.Date
-  minutos      String?      @db.VarChar(5)
-  tipo         String?      @db.VarChar(20)
-  estado       String?      @db.VarChar(20)
-  actividades  actividades? @relation(fields: [actividad_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_actividad_extra")
-  usuarios     usuarios?    @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_user_extra")
+  id               Int          @id @default(autoincrement())
+  actividad_id     Int?
+  usuario_id       Int?
+  horario_id       Int?
+  canje_horario_id Int?
+  fecha            DateTime?    @db.Date
+  minutos          String?      @db.VarChar(5)
+  tipo             String?      @db.VarChar(20)
+  estado           String?      @db.VarChar(20)
+  created_at       DateTime?    @db.Timestamptz(6)
+  updated_at       DateTime?    @db.Timestamptz(6)
+  actividades      actividades? @relation(fields: [actividad_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_actividad_extra")
+  usuarios         usuarios?    @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_user_extra")
+  horario_canje    horario_usuario? @relation("canje_horario", fields: [canje_horario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_canje_horario")
 }
 
 model institucion {
@@ -239,6 +246,22 @@ model permisos {
   acciones  acciones? @relation(fields: [accion_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_per_accion")
   modulos   modulos?  @relation(fields: [modulo_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_per_modulo")
   roles     roles?    @relation(fields: [rol_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_per_rol")
+}
+
+model permisos_usuario {
+  id          Int       @id @default(autoincrement())
+  usuario_id  Int?
+  fecha       DateTime? @db.Date
+  hora_inicio DateTime? @db.Timetz(6)
+  hora_fin    DateTime? @db.Timetz(6)
+  motivo      String?   @db.VarChar(255)
+  estado      Boolean?
+  created_at  DateTime? @db.Timestamptz(6)
+  updated_at  DateTime? @db.Timestamptz(6)
+
+  usuarios    usuarios? @relation(fields: [usuario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_permiso_usuario")
+
+  @@map("permisos_usuario")
 }
 
 model personas {
@@ -399,6 +422,7 @@ model usuarios {
   tipo_jornada                                               tipo_jornada?                 @relation(fields: [tipo_jornada_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_jornada")
   personas                                                   personas?                     @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_persona_user")
   roles                                                      roles?                        @relation(fields: [rol_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_rol_user")
+  permisos_usuario                                           permisos_usuario[]
 }
 
 model Session {

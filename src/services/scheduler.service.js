@@ -103,6 +103,7 @@ class SchedulerService {
       `SELECT
          hu.id              AS horario_id,
          hu.actividad_id,
+         hu.marca           AS hu_marca,
          hu.tipo            AS hu_tipo,
          TO_CHAR(hu.hora_inicio::time, 'HH24:MI:SS') AS hi,
          TO_CHAR(hu.hora_fin::time,    'HH24:MI:SS') AS hf,
@@ -114,15 +115,15 @@ class SchedulerService {
          tt.id              AS tipo_tarea_id,
          tt.tipo            AS tipo_tarea_tipo,
          TO_CHAR(p.fecha_entrega, 'YYYY-MM-DD') AS deadline
-       FROM horario_usuario hu
+        FROM horario_usuario hu
        LEFT JOIN actividades a   ON a.id = hu.actividad_id
        LEFT JOIN tarea t         ON t.id = a.tarea_id
        LEFT JOIN tipo_tarea tt   ON tt.id = t.tipo_tarea
        LEFT JOIN prospectos p    ON p.id = a.prospecto_id
-       WHERE hu.usuario_id = $1
-         AND hu.estado = true
-         AND hu.fecha = $2::date
-       ORDER BY hu.hora_inicio ASC`,
+        WHERE hu.usuario_id = $1
+          AND hu.estado = true
+          AND hu.fecha = $2::date
+        ORDER BY hu.hora_inicio ASC`,
       uid,
       fechaStr,
     );
@@ -144,7 +145,7 @@ class SchedulerService {
           fin: toMin(r.hf),
           minutos: r.duracion_minutos ? Number(r.duracion_minutos) : null,
           prioridad: r.prioridad || null,
-          bloqueada: r.bloqueada === true || r.bloqueada === "true",
+          bloqueada: r.bloqueada === true || r.bloqueada === "true" || r.hu_marca === "canje" || r.hu_marca === "libre" || r.hu_marca === "permiso",
           estado_progreso: r.estado_progreso || null,
           prospecto_id: r.prospecto_id ? Number(r.prospecto_id) : null,
           deadline: r.deadline || null,
@@ -1230,19 +1231,20 @@ class SchedulerService {
            TO_CHAR(hu.hora_inicio::time, 'HH24:MI:SS') AS hi,
            TO_CHAR(hu.hora_fin::time,    'HH24:MI:SS') AS hf,
            hu.duracion_minutos,
-           hu.tipo            AS hu_tipo,
-           a.prioridad,
-           a.bloqueada,
+            hu.marca           AS hu_marca,
+            hu.tipo            AS hu_tipo,
+            a.prioridad,
+            a.bloqueada,
            a.estado_progreso,
            a.prospecto_id,
            TO_CHAR(p.fecha_entrega, 'YYYY-MM-DD')      AS deadline
          FROM horario_usuario hu
          LEFT JOIN actividades a ON a.id = hu.actividad_id
          LEFT JOIN prospectos p  ON p.id = a.prospecto_id
-         WHERE hu.usuario_id = $1
-           AND hu.estado = true
-           AND hu.fecha BETWEEN $2::date AND $3::date
-         ORDER BY hu.fecha ASC, hu.hora_inicio ASC`,
+          WHERE hu.usuario_id = $1
+            AND hu.estado = true
+            AND hu.fecha BETWEEN $2::date AND $3::date
+          ORDER BY hu.fecha ASC, hu.hora_inicio ASC`,
         uid,
         fechaDesde,
         fechaHasta,
@@ -1264,7 +1266,7 @@ class SchedulerService {
                 : ini != null && fin != null
                 ? fin - ini
                 : 0,
-            bloqueada: r.bloqueada === true || r.bloqueada === "true",
+          bloqueada: (r.bloqueada === true || r.bloqueada === "true") || (r.hu_marca === "canje" || r.hu_marca === "libre" || r.hu_marca === "permiso"),
             prioridad: r.prioridad || null,
             estado_progreso: r.estado_progreso || null,
             deadline: r.deadline || null,

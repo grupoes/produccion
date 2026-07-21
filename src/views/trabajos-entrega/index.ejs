@@ -1,0 +1,90 @@
+<div class="row justify-content-center py-3">
+  <div class="col-xxl-5 col-xl-7 text-center">
+    <h3 class="fw-bold">Trabajos por entregar</h3>
+    <p class="text-muted mb-0">
+      Clientes con fecha de entrega próxima, organizados por semana.
+    </p>
+  </div>
+</div>
+
+<!-- Navegación entre semanas -->
+<ul class="nav nav-tabs mb-3" id="js-tabnav" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="js-tab-esta-semana" data-bs-toggle="tab" data-bs-target="#tab-esta-semana" type="button" role="tab">
+      <i class="ti ti-calendar-week me-1"></i>Esta semana
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="js-tab-proxima-semana" data-bs-toggle="tab" data-bs-target="#tab-proxima-semana" type="button" role="tab">
+      <i class="ti ti-calendar-due me-1"></i>Próxima semana
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+  <!-- Esta semana -->
+  <div class="tab-pane fade show active" id="tab-esta-semana" role="tabpanel">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0">Esta semana</h5>
+        <span class="badge bg-primary-subtle text-primary" id="js-count-esta">0</span>
+      </div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-striped align-middle mb-0 fs-sm">
+            <thead class="thead-sm text-uppercase fs-xxs">
+              <tr>
+                <th>#</th>
+                <th>Cliente</th>
+                <th>Contactos</th>
+                <th>F. entrega</th>
+                <th>Prioridad</th>
+                <th>Actividades</th>
+                <th>Asesor</th>
+                <th>Drive</th>
+              </tr>
+            </thead>
+            <tbody id="js-tbody-esta">
+              <tr>
+                <td colspan="8" class="text-center text-muted py-4">Cargando…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Próxima semana -->
+  <div class="tab-pane fade" id="tab-proxima-semana" role="tabpanel">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0">Próxima semana</h5>
+        <span class="badge bg-info-subtle text-info" id="js-count-prox">0</span>
+      </div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-striped align-middle mb-0 fs-sm">
+            <thead class="thead-sm text-uppercase fs-xxs">
+              <tr>
+                <th>#</th>
+                <th>Cliente</th>
+                <th>Contactos</th>
+                <th>F. entrega</th>
+                <th>Prioridad</th>
+                <th>Actividades</th>
+                <th>Asesor</th>
+                <th>Drive</th>
+              </tr>
+            </thead>
+            <tbody id="js-tbody-prox">
+              <tr>
+                <td colspan="8" class="text-center text-muted py-4">Cargando…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
