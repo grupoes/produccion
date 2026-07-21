@@ -1358,6 +1358,8 @@
         const finHora = a.hora_fin || calcularHoraFin(a.hora_inicio, a.tiempo_estimado_minutos);
         return `<tr>
           <td><strong>${escapeHtml(a.tarea_nombre || "")}</strong></td>
+          <td style="white-space:nowrap">${escapeHtml(formatMin(a.tiempo_estimado_minutos))}</td>
+          <td style="white-space:nowrap">${escapeHtml(a.usuario_nombre || "—")}</td>
           <td style="white-space:nowrap">${escapeHtml(formatearFecha(a.fecha_inicio))} ${escapeHtml(a.hora_inicio || "")}</td>
           <td style="white-space:nowrap">${escapeHtml(formatearFecha(finFecha))} ${escapeHtml(finHora || "")}</td>
         </tr>`;

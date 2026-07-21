@@ -3161,12 +3161,15 @@ class ReunionesAsistenteService {
          a.estado_progreso,
          a.tiempo_estimado_minutos,
          a.usuario_id,
+         CONCAT(p.nombres, ' ', p.apellidos) AS usuario_nombre,
          TO_CHAR(a.fecha_inicio, 'YYYY-MM-DD') AS fecha_inicio,
          TO_CHAR(a.hora_inicio::time, 'HH24:MI') AS hora_inicio,
          TO_CHAR(hu.fecha, 'YYYY-MM-DD') AS fecha_fin,
          TO_CHAR(hu.hora_fin::time, 'HH24:MI') AS hora_fin
        FROM actividades a
        LEFT JOIN tarea t ON t.id = a.tarea_id
+       LEFT JOIN usuarios u ON u.id = a.usuario_id
+       LEFT JOIN personas p ON p.id = u.persona_id
        LEFT JOIN LATERAL (
          SELECT hu2.fecha, hu2.hora_fin
            FROM horario_usuario hu2
@@ -3187,6 +3190,7 @@ class ReunionesAsistenteService {
       estado_progreso: r.estado_progreso || null,
       tiempo_estimado_minutos: r.tiempo_estimado_minutos ? Number(r.tiempo_estimado_minutos) : null,
       usuario_id: r.usuario_id ? Number(r.usuario_id) : null,
+      usuario_nombre: r.usuario_nombre || null,
       fecha_inicio: r.fecha_inicio || null,
       hora_inicio: r.hora_inicio || null,
       fecha_fin: r.fecha_fin || null,
