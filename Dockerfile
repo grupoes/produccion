@@ -39,7 +39,7 @@ COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
 COPY --from=builder --chown=nodejs:nodejs /app/src ./src
 COPY --from=builder --chown=nodejs:nodejs /app/public ./public
-COPY --from=builder --chown=nodejs:nodejs /app/views ./views
+COPY --from=builder --chown=nodejs:nodejs /app/src/views ./src/views
 COPY --from=builder --chown=nodejs:nodejs /app/package.json ./package.json
 
 USER nodejs
