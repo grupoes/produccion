@@ -1500,16 +1500,18 @@ class SchedulerService {
       calendarioMem.get(fechaStr).push(ev);
     };
 
-    // Determinar el rango total a barrer: el máximo entre los horizontes
+    // Determinar el rango total a barrer: el MÁXIMO entre los horizontes
     // individuales (startDate + diasHorizonte) y los deadlines de las
-    // candidatas.
+    // candidatas. Usamos el máximo para que calendarioMem tenga los bloques
+    // de todas las fechas relevantes (incluyendo reuniones fijas) y ninguna
+    // actividad intente colocar bloques en días que no han sido cargados.
     let endDate = new Date(startDate);
     endDate.setDate(endDate.getDate() + diasHorizonte);
     for (const c of candidatas) {
       if (c.deadline) {
         const d = parseLocalDate(c.deadline);
-        if (d && d.getTime() < endDate.getTime()) {
-          // El deadline es anterior al horizonte → respetar deadline.
+        if (d && d.getTime() > endDate.getTime()) {
+          // El deadline supera el horizonte → ampliar el rango de precarga.
           endDate = d;
         }
       }

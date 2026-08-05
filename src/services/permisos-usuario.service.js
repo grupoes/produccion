@@ -759,6 +759,21 @@ class PermisosUsuarioService {
       (new Date(deadline + "T00:00:00") - hoy) / 86400000
     )) : 60;
 
+    // Pre-cargar feriados activos en el rango para evitar N queries
+    const fechaFin = new Date(hoy);
+    fechaFin.setDate(fechaFin.getDate() + maxDays);
+    const feriadosRows = await tx.feriados.findMany({
+      where: { estado: true },
+      select: { fecha: true },
+    });
+    const feriadosSet = new Set(
+      feriadosRows.map((f) => {
+        // fecha viene como UTC midnight desde la BD — usar getUTC* para comparar
+        const d = new Date(f.fecha);
+        return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+      }),
+    );
+
     for (let i = 0; i <= maxDays; i++) {
       const cursor = new Date(hoy);
       cursor.setDate(cursor.getDate() + i);
@@ -768,6 +783,9 @@ class PermisosUsuarioService {
 
       // Verificar deadline
       if (deadline && fechaStr > deadline) return null;
+
+      // Saltar feriados
+      if (feriadosSet.has(fechaStr)) continue;
 
       // Cargar bloques de jornada
       const jRows = await tx.horario_jornada_detalle.findMany({

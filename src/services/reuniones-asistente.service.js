@@ -135,10 +135,11 @@ class ReunionesAsistenteService {
   // -----------------------------------------------------------------------
   // Búsqueda de prospectos para el modal "Nueva reunión"
   // -----------------------------------------------------------------------
-  // Devuelve prospectos ACTIVOS con sus contactos. Filtra por:
+  // Devuelve clientes ACTIVOS (estado_cliente='cliente') con sus contactos.
+  // Filtra por:
   //   - titulo_prospecto (ILIKE)
   //   - nombres / apellidos / número de documento de los contactos
-  // El Asistente puede asignar reuniones a "potencial cliente" O "cliente".
+  // El Asistente solo puede asignar reuniones a registros que ya son "cliente".
   async listarProspectosParaReunion({ q, limit } = {}) {
     const term = String(q || "").trim();
     const lim = Math.max(1, Math.min(50, Number(limit) || 20));
@@ -146,7 +147,7 @@ class ReunionesAsistenteService {
     // Armamos un query crudo para hacer un solo viaje a la BD con la
     // subconsulta de contactos agregada como JSON.
     const params = [];
-    let where = `WHERE p.estado = true`;
+    let where = `WHERE p.estado = true AND p.estado_cliente = 'cliente'`;
     if (term) {
       params.push(`%${term}%`);
       const i = params.length;
@@ -217,7 +218,7 @@ class ReunionesAsistenteService {
     const term = String(q || "").trim();
     const lim = Math.max(1, Math.min(100, Number(limit) || 50));
     const params = [];
-    let where = `WHERE p.estado = true`;
+    let where = `WHERE p.estado = true AND p.estado_cliente = 'cliente'`;
     if (term) {
       params.push(`%${term}%`);
       const i = params.length;
@@ -1064,6 +1065,8 @@ class ReunionesAsistenteService {
     horaInicio,
     duracionMinutos,
     motivo,
+    modo = "actividad",
+    horarioId = null,
     asistenteId,
   }) {
     const id = Number(actividadId);
@@ -1094,6 +1097,11 @@ class ReunionesAsistenteService {
       const e = new Error(
         "No se puede reprogramar una reunión que está en progreso.",
       );
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+    if (act.bloqueada || String(act.prioridad || "").toUpperCase() === "ALTA") {
+      const e = new Error("No se puede reprogramar una reunión de prioridad ALTA.");
       e.code = "BAD_REQUEST";
       throw e;
     }
@@ -1223,11 +1231,16 @@ class ReunionesAsistenteService {
 
     const result = await prisma.$transaction(async (tx) => {
       // Localizar el horario_usuario de esta actividad (puede ser null).
-      const hu = await tx.horario_usuario.findFirst({
-        where: { actividad_id: id, usuario_id: act.usuario_id, estado: true },
-        select: { id: true },
-        orderBy: { id: "desc" },
-      });
+      const hu = horarioId
+        ? await tx.horario_usuario.findFirst({
+            where: { id: Number(horarioId), actividad_id: id, estado: true },
+            select: { id: true },
+          })
+        : await tx.horario_usuario.findFirst({
+            where: { actividad_id: id, usuario_id: act.usuario_id, estado: true },
+            select: { id: true },
+            orderBy: { id: "desc" },
+          });
 
       const moves = [...(plan.moves || [])];
       const splits = [...(plan.splits || [])];
@@ -1277,16 +1290,22 @@ class ReunionesAsistenteService {
         }
       }
 
-      // Actualizar la actividad: nuevos fecha/hora + motivo.
+      // Actualizar la actividad: si modo='actividad' actualiza fecha/hora canónica;
+      // si modo='bloque' solo guarda el motivo (la fecha oficial no cambia).
       const upd = await tx.actividades.update({
         where: { id },
-        data: {
-          fecha_inicio: new Date(fecha),
-          hora_inicio: hmsToLocalDate(horaIniNorm),
-          tiempo_estimado_minutos: minutos,
-          motivo_reprograma: motivoTxt,
-          updated_at: new Date(),
-        },
+        data: modo === "actividad"
+          ? {
+              fecha_inicio: new Date(fecha),
+              hora_inicio: hmsToLocalDate(horaIniNorm),
+              tiempo_estimado_minutos: minutos,
+              motivo_reprograma: motivoTxt,
+              updated_at: new Date(),
+            }
+          : {
+              motivo_reprograma: motivoTxt,
+              updated_at: new Date(),
+            },
       });
 
       return {
@@ -1333,6 +1352,9 @@ class ReunionesAsistenteService {
     horaInicio,
     duracionMinutos,
     motivo,
+    modo = "bloque",
+    horarioId = null,
+    rebalanceOrigen = true,
     asistenteId,
   }) {
     const id = Number(actividadId);
@@ -1368,6 +1390,11 @@ class ReunionesAsistenteService {
       const e = new Error(
         "No se puede reasignar una reunión que está en progreso.",
       );
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+    if (act.bloqueada || String(act.prioridad || "").toUpperCase() === "ALTA") {
+      const e = new Error("No se puede reasignar una reunión de prioridad ALTA.");
       e.code = "BAD_REQUEST";
       throw e;
     }
@@ -1521,6 +1548,9 @@ class ReunionesAsistenteService {
       ? await schedulerService.applySplits(splits, motivoTxt)
       : { applied: { splits: 0, overflow: 0, cascadeMoves: 0 } };
 
+    const modoFinal = modo === "actividad" ? "actividad" : "bloque";
+    const hid = horarioId ? Number(horarioId) : null;
+
     const result = await prisma.$transaction(async (tx) => {
       // Deshabilitar bloques de otras actividades que quedaron después de
       // la reunión en el mismo día. completeActividades los re-ubicará.
@@ -1533,19 +1563,86 @@ class ReunionesAsistenteService {
         }
       }
 
-      // 1) Cerrar el horario_usuario viejo (estado=false) si existía.
-      const huViejo = await tx.horario_usuario.findFirst({
-        where: { actividad_id: id, estado: true },
-        select: { id: true },
-      });
-      if (huViejo) {
-        await tx.horario_usuario.update({
-          where: { id: huViejo.id },
-          data: { estado: false, updated_at: new Date() },
+      let huViejoId = null;
+
+      if (modoFinal === "bloque") {
+        // MODO BLOQUE: cerrar solo el bloque clickeado (o el primero activo).
+        const whereViejo = hid
+          ? { id: hid, actividad_id: id, estado: true }
+          : { actividad_id: id, estado: true };
+        const huViejo = await tx.horario_usuario.findFirst({
+          where: whereViejo,
+          select: { id: true },
         });
+        if (huViejo) {
+          await tx.horario_usuario.update({
+            where: { id: huViejo.id },
+            data: { estado: false, updated_at: new Date() },
+          });
+          huViejoId = huViejo.id;
+        }
+      } else {
+        // MODO ACTIVIDAD: cerrar TODOS los bloques activos de la actividad.
+        // - Para el usuario original: crear marcador "reasignado" en cada bloque.
+        // - Para bloques de otras fechas (no el actual): crear el bloque equivalente
+        //   para el nuevo usuario con la misma fecha/hora (reuniones son fijas en el tiempo).
+        // - El bloque actual (fecha = fechaYmd o id = hid) lo crea el scheduler abajo.
+        const bloquesViejos = await tx.horario_usuario.findMany({
+          where: { actividad_id: id, estado: true },
+          select: { id: true, fecha: true, hora_inicio: true, hora_fin: true, duracion_minutos: true, usuario_id: true },
+        });
+        for (const b of bloquesViejos) {
+          await tx.horario_usuario.update({
+            where: { id: b.id },
+            data: { estado: false, updated_at: new Date() },
+          });
+          // Marcador informativo "Asignado a otro" para el usuario original.
+          if (Number(b.usuario_id) === act.usuario_id) {
+            await tx.horario_usuario.create({
+              data: {
+                actividad_id: null,
+                usuario_id: act.usuario_id,
+                fecha: b.fecha,
+                hora_inicio: b.hora_inicio,
+                hora_fin: b.hora_fin,
+                duracion_minutos: b.duracion_minutos,
+                tipo: "reasignado",
+                marca: "reasignado",
+                categoria: "potencial_cliente",
+                estado: true,
+                created_at: new Date(),
+                updated_at: new Date(),
+              },
+            });
+          }
+          // Para bloques de otras fechas: transferir directamente al nuevo usuario
+          // con la misma fecha/hora (la reunión ya estaba pactada a esa hora).
+          const bFechaStr = b.fecha instanceof Date
+            ? `${b.fecha.getUTCFullYear()}-${String(b.fecha.getUTCMonth() + 1).padStart(2, "0")}-${String(b.fecha.getUTCDate()).padStart(2, "0")}`
+            : String(b.fecha).slice(0, 10);
+          const isCurrentBlock = hid ? b.id === hid : bFechaStr === fechaYmd;
+          if (!isCurrentBlock) {
+            await tx.horario_usuario.create({
+              data: {
+                actividad_id: id,
+                usuario_id: nuevo_uid,
+                fecha: b.fecha,
+                hora_inicio: b.hora_inicio,
+                hora_fin: b.hora_fin,
+                duracion_minutos: b.duracion_minutos,
+                tipo: "reunion",
+                categoria: "potencial_cliente",
+                estado: true,
+                created_at: new Date(),
+                updated_at: new Date(),
+              },
+            });
+          }
+        }
+        huViejoId = bloquesViejos[0]?.id || null;
       }
 
-      // 2) Crear el nuevo slot en el calendario del usuario destino.
+      // Crear el nuevo slot en el calendario del usuario destino.
       const huNuevo = await tx.horario_usuario.create({
         data: {
           actividad_id: id,
@@ -1562,22 +1659,25 @@ class ReunionesAsistenteService {
         },
       });
 
-      // 3) Actualizar la actividad: nuevo usuario, fecha, hora, motivo.
-      const upd = await tx.actividades.update({
-        where: { id },
-        data: {
-          usuario_id: nuevo_uid,
-          fecha_inicio: new Date(fechaYmd),
-          hora_inicio: hmsToLocalDate(horaIniNorm),
-          tiempo_estimado_minutos: minutos,
-          motivo_reprograma: motivoTxt,
-          updated_at: new Date(),
-        },
-      });
+      // Actualizar actividad según el modo.
+      const actData = modoFinal === "actividad"
+        ? {
+            usuario_id: nuevo_uid,
+            fecha_inicio: new Date(fechaYmd),
+            hora_inicio: hmsToLocalDate(horaIniNorm),
+            tiempo_estimado_minutos: minutos,
+            motivo_reprograma: motivoTxt,
+            updated_at: new Date(),
+          }
+        : {
+            motivo_reprograma: motivoTxt,
+            updated_at: new Date(),
+          };
+      const upd = await tx.actividades.update({ where: { id }, data: actData });
 
       return {
         actividad: upd,
-        horarioViejoId: huViejo?.id || null,
+        horarioViejoId: huViejoId,
         horarioNuevo: huNuevo,
         applied: {
           moves: movesRes.applied || 0,
@@ -1587,6 +1687,14 @@ class ReunionesAsistenteService {
         },
       };
     });
+
+    // Para modo "actividad" y si el usuario lo solicitó, rebalancear el
+    // calendario del usuario original para que sus actividades llenen el hueco.
+    if (modoFinal === "actividad" && rebalanceOrigen) {
+      try {
+        await this.rebalanceUsuario(act.usuario_id, fechaYmd, { motivo: motivoTxt });
+      } catch (_) { /* non-critical */ }
+    }
 
     return {
       actividad: {
@@ -3032,7 +3140,17 @@ class ReunionesAsistenteService {
 
     const act = await prisma.actividades.findUnique({
       where: { id },
-      select: { id: true, estado: true, estado_progreso: true, usuario_id: true },
+      select: {
+        id: true,
+        estado: true,
+        estado_progreso: true,
+        usuario_id: true,
+        tarea: {
+          select: {
+            tipo_tarea_tarea_tipo_tareaTotipo_tarea: { select: { id: true, tipo: true } },
+          },
+        },
+      },
     });
     if (!act) {
       const e = new Error("La actividad no existe.");
@@ -3046,6 +3164,11 @@ class ReunionesAsistenteService {
     }
     if (String(act.estado_progreso || "").toLowerCase() === "en_progreso") {
       const e = new Error("No se puede guardar un bloque de una actividad en progreso.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+    if (isReunionTarea(act.tarea)) {
+      const e = new Error("No se puede marcar un bloque de reunión como hora extra/libre.");
       e.code = "BAD_REQUEST";
       throw e;
     }

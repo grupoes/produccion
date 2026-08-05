@@ -325,6 +325,7 @@
     const esLibre = a.marca === "libre";
     const esCanje = a.marca === "canje";
     const esPermiso = a.marca === "permiso";
+    const esReasignado = a.marca === "reasignado" || a.hu_tipo === "reasignado";
 
     return {
       id: eventId,
@@ -332,16 +333,21 @@
         ? `${horaTxt}⏳ Canjeado`
         : esPermiso
           ? `${horaTxt}🔒 Permiso`
-          : `${horaTxt}${a.tarea?.nombre || "(sin tarea)"}${prospectoTxt}`,
+          : esReasignado
+            ? `${horaTxt}Asignado a otro`
+            : `${horaTxt}${a.tarea?.nombre || "(sin tarea)"}${prospectoTxt}`,
       start: start ? start.toISOString() : null,
       end,
       classNames: [calendarClassForEstado(a.estado_progreso)],
+      editable: !esReasignado && !esPermiso,
       ...(esLibre
         ? { backgroundColor: "#000", borderColor: "#000", textColor: "#fff" }
         : esCanje
           ? { backgroundColor: "#f59e0b", borderColor: "#f59e0b", textColor: "#fff" }
         : esPermiso
           ? { backgroundColor: "#e11d48", borderColor: "#e11d48", textColor: "#fff" }
+        : esReasignado
+          ? { backgroundColor: "#4b5563", borderColor: "#374151", textColor: "#fff" }
         : color
           ? { backgroundColor: color, borderColor: color }
           : {}),
@@ -351,6 +357,7 @@
           a.horario_usuario_id != null ? Number(a.horario_usuario_id) : null,
         actividad: a,
         marca: a.marca || null,
+        hu_tipo: a.hu_tipo || null,
       },
     };
   }
@@ -768,6 +775,8 @@
       if (btnRepro) {
         btnRepro.classList.remove("d-none");
         btnRepro.dataset.actividadId = String(data.id);
+        btnRepro.dataset.esReunion = esReunion ? "1" : "0";
+        btnRepro.dataset.horarioId = String(horarioId || "");
       }
       if (btnAjd && esReunion) {
         btnAjd.classList.remove("d-none");
@@ -777,6 +786,10 @@
       if (btnReasig) {
         btnReasig.classList.remove("d-none");
         btnReasig.dataset.actividadId = String(data.id);
+        if (slotBlock?.fecha) btnReasig.dataset.fecha = String(slotBlock.fecha).slice(0, 10);
+        if (slotBlock?.hora_inicio) btnReasig.dataset.hora = String(slotBlock.hora_inicio).slice(0, 5);
+        btnReasig.dataset.duracion = String(slotBlock?.duracion_minutos || data.tiempo_estimado_minutos || 60);
+        btnReasig.dataset.horarioId = String(horarioId || "");
       }
       if (btnElim) {
         btnElim.classList.remove("d-none");
@@ -864,6 +877,8 @@
   function openReprogramarModal(actividadId, defaults = {}) {
     const modal = getModal("js-cal-reprogramar-modal");
     if (!modal) return;
+    const titulo = document.querySelector("#js-cal-reprogramar-modal .modal-title");
+    if (titulo) titulo.textContent = `Reprogramar ${defaults.esReunion ? "reunión" : "actividad"}`;
     document.getElementById("js-cal-rep-fecha").value = defaults.fecha || todayLocalYYYYMMDD();
     document.getElementById("js-cal-rep-hora").value = defaults.hora || "09:00";
     document.getElementById("js-cal-rep-duracion").value = defaults.duracion || 60;
@@ -873,7 +888,11 @@
     if (btn) {
       btn.disabled = false;
       btn.dataset.actividadId = String(actividadId);
+      btn.dataset.horarioId = String(defaults.horarioId || "");
+      btn.dataset.esReunion = defaults.esReunion ? "1" : "0";
     }
+    const radioBloque = document.getElementById("js-cal-rep-modo-bloque");
+    if (radioBloque) radioBloque.checked = true;
     // Flag para distinguir entre "se aplicó OK" y "se cerró sin aplicar".
     // Si el usuario cierra el modal sin aplicar (Cancelar / ESC / click
     // afuera), el listener `hidden.bs.modal` revierte el evento arrastrado
@@ -891,6 +910,8 @@
     const hora = document.getElementById("js-cal-rep-hora").value;
     const duracion = Number(document.getElementById("js-cal-rep-duracion").value);
     const motivo = document.getElementById("js-cal-rep-motivo").value;
+    const modo = document.querySelector('input[name="rep-modo"]:checked')?.value || "bloque";
+    const horarioId = Number(btn?.dataset.horarioId || 0) || undefined;
     if (!fecha || !hora || !duracion) {
       showToast("warning", "Completa fecha, hora y duración.");
       return;
@@ -907,12 +928,15 @@
             hora_inicio: hora,
             duracion_minutos: duracion,
             motivo: motivo || undefined,
+            modo,
+            horario_id: horarioId,
           }),
         },
       );
       const modalEl = document.getElementById("js-cal-reprogramar-modal");
       if (modalEl) modalEl.dataset.applied = "1";
-      showToast("success", "Reunión reprogramada.");
+      const esReu = btn?.dataset.esReunion === "1";
+      showToast("success", esReu ? "Reunión reprogramada." : "Actividad reprogramada.");
       const modal = getModal("js-cal-reprogramar-modal");
       if (modal) modal.hide();
       await refreshAll();
@@ -996,16 +1020,26 @@
     document.getElementById("js-cal-rea-duracion").value = defaults.duracion || 60;
     document.getElementById("js-cal-rea-motivo").value = defaults.motivo || "";
     document.getElementById("js-cal-rea-result").innerHTML =
-      '<div class="text-muted small">Elegí fecha/hora/duración y tocá "Con hueco" para ver candidatos.</div>';
+      '<div class="text-center text-muted py-2"><span class="spinner-border spinner-border-sm me-2"></span>Buscando candidatos…</div>';
     const sel = document.getElementById("js-cal-rea-usuario");
     sel.innerHTML = '<option value="">— Toca "Con hueco" —</option>';
-    reasignarState = { fecha: null, hora: null, duracion: null, candidates: [] };
+    reasignarState = { fecha: null, hora: null, duracion: null, candidates: [], horarioId: defaults.horarioId || null };
     const btn = document.getElementById("js-cal-rea-aplicar");
     if (btn) {
       btn.disabled = true;
       btn.dataset.actividadId = String(actividadId);
+      btn.dataset.horarioId = String(defaults.horarioId || "");
     }
+    // Resetear modo al valor por defecto y ocultar checkbox de rebalance.
+    const modoBloque = document.getElementById("rea-modo-bloque");
+    if (modoBloque) modoBloque.checked = true;
+    const rebalanceWrap = document.getElementById("rea-rebalance-wrap");
+    if (rebalanceWrap) rebalanceWrap.classList.add("d-none");
+    const rebalanceCb = document.getElementById("rea-rebalance");
+    if (rebalanceCb) rebalanceCb.checked = true;
     modal.show();
+    // Auto-buscar candidatos al abrir si ya tenemos los datos de la reunión.
+    loadCandidatosConHueco();
   }
 
   async function loadCandidatosConHueco() {
@@ -1117,6 +1151,11 @@
     const hora = document.getElementById("js-cal-rea-hora").value;
     const duracion = Number(document.getElementById("js-cal-rea-duracion").value);
     const motivo = document.getElementById("js-cal-rea-motivo").value;
+    const modo = document.querySelector('input[name="rea-modo"]:checked')?.value || "bloque";
+    const horarioId = Number(btn?.dataset.horarioId || 0) || undefined;
+    const rebalanceOrigen = modo === "actividad"
+      ? (document.getElementById("rea-rebalance")?.checked ?? true)
+      : false;
     btn.disabled = true;
     try {
       await fetchJSON(`/api/calendario-asistente/reuniones/${id}/reasignar`, {
@@ -1128,6 +1167,9 @@
           hora_inicio: hora,
           duracion_minutos: duracion,
           motivo: motivo || undefined,
+          modo,
+          horario_id: horarioId,
+          rebalance_origen: rebalanceOrigen,
         }),
       });
       showToast("success", "Reunión reasignada.");
@@ -2068,12 +2110,14 @@
         const id = Number(info.event.extendedProps?.actividad_id || 0);
         const hid = Number(info.event.extendedProps?.horario_usuario_id || 0);
         const marca = info.event.extendedProps?.marca || null;
-        if (!id && hid && marca === "permiso") {
-          // Bloque permiso: mostrar info
+        const huTipo = info.event.extendedProps?.hu_tipo || null;
+        if (!id && hid && (marca === "reasignado" || huTipo === "reasignado")) {
+          const a = info.event.extendedProps?.actividad;
+          showToast("info", `Asignado a otro usuario: ${a?.hora_inicio || ""} – ${a?.hora_fin || ""}`);
+        } else if (!id && hid && marca === "permiso") {
           const a = info.event.extendedProps?.actividad;
           showToast("info", `🔒 Permiso: ${a?.hora_inicio || ""} – ${a?.hora_fin || ""} (bloque fijo)`);
         } else if (!id && hid) {
-          // Bloque sin actividad (canje/libre): mostrar detalle del canje
           openCanjeDetailModal(hid);
         } else if (id) {
           openDetailModal(id, hid);
@@ -2082,7 +2126,8 @@
       eventDrop: function (info) {
         const id = Number(info.event.extendedProps?.actividad_id || 0);
         const marca = info.event.extendedProps?.marca || null;
-        if (!id || marca === "permiso") {
+        const huTipo = info.event.extendedProps?.hu_tipo || null;
+        if (!id || marca === "permiso" || marca === "reasignado" || huTipo === "reasignado") {
           info.revert();
           return;
         }
@@ -2096,7 +2141,13 @@
         const fecha = newStart
           ? `${newStart.getFullYear()}-${String(newStart.getMonth() + 1).padStart(2, "0")}-${String(newStart.getDate()).padStart(2, "0")}`
           : todayLocalYYYYMMDD();
-        openReprogramarModal(id, { fecha, hora: `${hh}:${mm}`, duracion: mins });
+        const esReunionDrop = Number(info.event.extendedProps?.actividad?.tarea?.tipo_tarea?.id) === 2;
+        if (esReunionDrop) {
+          info.revert();
+          showToast("warning", "Las reuniones son fijas. Usá el botón 'Reprogramar'.");
+          return;
+        }
+        openReprogramarModal(id, { fecha, hora: `${hh}:${mm}`, duracion: mins, esReunion: false });
       },
       eventResize: function (info) {
         const id = Number(info.event.extendedProps?.actividad_id || 0);
@@ -2114,7 +2165,13 @@
         const fecha = newStart
           ? `${newStart.getFullYear()}-${String(newStart.getMonth() + 1).padStart(2, "0")}-${String(newStart.getDate()).padStart(2, "0")}`
           : todayLocalYYYYMMDD();
-        openReprogramarModal(id, { fecha, hora: `${hh}:${mm}`, duracion: mins });
+        const esReunionResize = Number(info.event.extendedProps?.actividad?.tarea?.tipo_tarea?.id) === 2;
+        if (esReunionResize) {
+          info.revert();
+          showToast("warning", "Las reuniones son fijas. Usá el botón 'Reprogramar'.");
+          return;
+        }
+        openReprogramarModal(id, { fecha, hora: `${hh}:${mm}`, duracion: mins, esReunion: false });
       },
     });
     cal.render();
@@ -2526,7 +2583,10 @@
         if (!id) return;
         const modal = getModal("js-cal-event-modal");
         if (modal) modal.hide();
-        openReprogramarModal(id);
+        openReprogramarModal(id, {
+          esReunion: this.dataset.esReunion === "1",
+          horarioId: Number(this.dataset.horarioId || 0) || null,
+        });
       });
     document
       .getElementById("js-cal-btn-ajustar-duracion")
@@ -2545,7 +2605,12 @@
         if (!id) return;
         const modal = getModal("js-cal-event-modal");
         if (modal) modal.hide();
-        openReasignarModal(id);
+        openReasignarModal(id, {
+          fecha: this.dataset.fecha || null,
+          hora: this.dataset.hora || null,
+          duracion: Number(this.dataset.duracion || 0) || null,
+          horarioId: Number(this.dataset.horarioId || 0) || null,
+        });
       });
     document
       .getElementById("js-cal-btn-eliminar")
@@ -2596,7 +2661,34 @@
       ?.addEventListener("change", function () {
         const btn = document.getElementById("js-cal-rea-aplicar");
         if (btn) btn.disabled = !this.value;
+        if (this.value) {
+          const uid = Number(this.value);
+          const candidate = (reasignarState.candidates || []).find((c) => c.usuario_id === uid);
+          if (candidate?.slot?.hi) {
+            const horaInput = document.getElementById("js-cal-rea-hora");
+            if (horaInput) horaInput.value = candidate.slot.hi.slice(0, 5);
+          }
+        }
       });
+    // Mostrar/ocultar checkbox de rebalance según modo seleccionado.
+    document.querySelectorAll('input[name="rea-modo"]').forEach((radio) => {
+      radio.addEventListener("change", function () {
+        const wrap = document.getElementById("rea-rebalance-wrap");
+        if (wrap) wrap.classList.toggle("d-none", this.value !== "actividad");
+      });
+    });
+    ["js-cal-rea-fecha", "js-cal-rea-duracion"].forEach((fieldId) => {
+      document.getElementById(fieldId)?.addEventListener("change", () => {
+        if (!reasignarState.candidates?.length) return;
+        reasignarState = { fecha: null, hora: null, duracion: null, candidates: [] };
+        const sel = document.getElementById("js-cal-rea-usuario");
+        if (sel) sel.innerHTML = '<option value="">— Toca "Con hueco" —</option>';
+        const aplicarBtn = document.getElementById("js-cal-rea-aplicar");
+        if (aplicarBtn) aplicarBtn.disabled = true;
+        const resultEl = document.getElementById("js-cal-rea-result");
+        if (resultEl) resultEl.innerHTML = '<div class="text-muted small">Cambios detectados. Tocá "Con hueco" para actualizar candidatos.</div>';
+      });
+    });
     document
       .getElementById("js-cal-rea-aplicar")
       ?.addEventListener("click", submitReasignar);

@@ -143,6 +143,8 @@ class ReunionesAsistenteController {
         horaInicio: b.hora_inicio,
         duracionMinutos: b.duracion_minutos,
         motivo: b.motivo,
+        modo: b.modo || "actividad",
+        horarioId: b.horario_id || null,
         asistenteId: guard.asistenteId,
       });
       return res.json({ success: true, data });
@@ -164,6 +166,9 @@ class ReunionesAsistenteController {
         horaInicio: b.hora_inicio,
         duracionMinutos: b.duracion_minutos,
         motivo: b.motivo,
+        modo: b.modo || "bloque",
+        horarioId: b.horario_id || null,
+        rebalanceOrigen: b.rebalance_origen !== false,
         asistenteId: guard.asistenteId,
       });
       return res.json({ success: true, data });

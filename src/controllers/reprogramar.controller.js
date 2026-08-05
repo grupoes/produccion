@@ -116,6 +116,13 @@ class ReprogramarController {
           .json({ error: "No tienes permiso para reprogramar esta actividad." });
       }
 
+      // Actividades de prioridad ALTA (bloqueadas) no se pueden reprogramar.
+      if (act.bloqueada || String(act.prioridad || "").toUpperCase() === "ALTA") {
+        return res
+          .status(403)
+          .json({ error: "Las actividades de prioridad ALTA no se pueden reprogramar." });
+      }
+
       const minutos = act.tiempo_estimado_minutos || 60;
       const fechaDestino =
         b.fecha_destino ||

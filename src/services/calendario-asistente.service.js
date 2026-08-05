@@ -459,8 +459,8 @@ class CalendarioAsistenteService {
         OR: [
           // Slots normales con actividad padre
           { actividad_id: { not: null } },
-          // Slots de marca libre / canje / permiso (sin actividad)
-          { marca: { in: ['libre', 'canje', 'permiso'] } },
+          // Slots de marca libre / canje / permiso / reasignado (sin actividad)
+          { marca: { in: ['libre', 'canje', 'permiso', 'reasignado'] } },
         ],
         ...(usuarioId != null ? { usuario_id: Number(usuarioId) } : {}),
       };
@@ -528,15 +528,16 @@ class CalendarioAsistenteService {
         take: 600,
       });
       return slots
-        .filter((s) => s.actividades || (s.marca && ['libre', 'canje', 'permiso'].includes(s.marca)))
+        .filter((s) => s.actividades || (s.marca && ['libre', 'canje', 'permiso', 'reasignado'].includes(s.marca)))
         .map((s) => {
           const a = s.actividades;
+          const esReasignado = !a && s.marca === 'reasignado';
           const esSlotMarca = !a && s.marca && ['libre', 'canje', 'permiso'].includes(s.marca);
           return {
             id: `hu-${s.id}`,
-            actividad_id: a?.id || (esSlotMarca ? 0 : null),
+            actividad_id: a?.id || (esSlotMarca || esReasignado ? 0 : null),
             horario_usuario_id: s.id,
-            estado_progreso: a?.estado_progreso || (esSlotMarca ? 'completada' : null),
+            estado_progreso: a?.estado_progreso || (esSlotMarca || esReasignado ? 'completada' : null),
             prioridad: a?.prioridad || null,
             estado: a?.estado ?? true,
             color: a?.color || null,
@@ -546,6 +547,7 @@ class CalendarioAsistenteService {
             hora_inicio: minToHHMM(hmsToMin(s.hora_inicio)),
             hora_fin: minToHHMM(hmsToMin(s.hora_fin)),
             marca: s.marca || null,
+            hu_tipo: esReasignado ? 'reasignado' : null,
             tiempo_estimado_minutos:
               s.duracion_minutos != null
                 ? Number(s.duracion_minutos)
@@ -723,6 +725,22 @@ class CalendarioAsistenteService {
       throw e;
     }
 
+    // Extraer uid antes del transaction para usarlo en las validaciones previas
+    const uid = Number(extras[0].usuario_id);
+    if (!uid) {
+      const e = new Error("Usuario no identificado.");
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
+    // Bug 2 fix: validar feriados y cumpleaños antes de crear el bloque
+    const fechaVal = await reunionesAsistenteService.validateFechaParaUsuario(uid, fechaDestino);
+    if (!fechaVal.ok) {
+      const e = new Error(fechaVal.message);
+      e.code = "BAD_REQUEST";
+      throw e;
+    }
+
     const fechaDest = new Date(fechaDestino + "T00:00:00");
 
     // Hora de inicio proporcionada por el usuario o default 09:00
@@ -734,16 +752,33 @@ class CalendarioAsistenteService {
       horaInicio = new Date(Date.UTC(1970, 0, 1, 9, 0));
     }
 
+    // Bug 3 fix: verificar disponibilidad del slot antes de insertar
+    const totalMinutos = extras.reduce((acc, e) => acc + (Number(e.minutos) || 0), 0);
+    const hi = horaInicio.getUTCHours();
+    const mi = horaInicio.getUTCMinutes() + totalMinutos;
+    const horaFin = new Date(Date.UTC(1970, 0, 1, hi + Math.floor(mi / 60), mi % 60));
+
+    const overlap = await prisma.$queryRawUnsafe(
+      `SELECT COUNT(*)::int AS cnt
+         FROM horario_usuario
+        WHERE usuario_id = $1
+          AND fecha = $2::date
+          AND estado = true
+          AND hora_inicio < $3
+          AND hora_fin   > $4`,
+      uid,
+      fechaDestino,
+      horaFin,
+      horaInicio,
+    );
+    if (Number(overlap?.[0]?.cnt) > 0) {
+      const e = new Error("El horario seleccionado se superpone con una actividad o reunión ya programada en esa fecha.");
+      e.code = "CONFLICT";
+      throw e;
+    }
+
+    // Bug 1 fix: rebalance FUERA del transaction para que vea el estado confirmado
     const result = await prisma.$transaction(async (tx) => {
-      const uid = Number(extras[0].usuario_id);
-      if (!uid) throw Object.assign(new Error("Usuario no identificado."), { code: "BAD_REQUEST" });
-
-      // Sumar minutos de todos los extras seleccionados
-      const totalMinutos = extras.reduce((acc, e) => acc + (Number(e.minutos) || 0), 0);
-      const hi = horaInicio.getUTCHours();
-      const mi = horaInicio.getUTCMinutes() + totalMinutos;
-      const horaFin = new Date(Date.UTC(1970, 0, 1, hi + Math.floor(mi / 60), mi % 60));
-
       // Crear UN bloque canjeado en la fecha destino
       const nuevoBloque = await tx.horario_usuario.create({
         data: {
@@ -779,7 +814,7 @@ class CalendarioAsistenteService {
         }
       }
 
-      // Marcar los bloques originales (deshabilitados) como "canje" para filtrar después
+      // Marcar los bloques originales (deshabilitados) como "canje" para auditoría
       const bloquesOriginales = [...new Set(extras.map(e => e.horario_id).filter(Boolean))];
       for (const bid of bloquesOriginales) {
         await tx.horario_usuario.update({
@@ -788,20 +823,18 @@ class CalendarioAsistenteService {
         });
       }
 
-      // Rebalancear desde la fecha destino
-      if (fechaDestino) {
-        try {
-          await reunionesAsistenteService.rebalanceUsuario(uid, fechaDestino, {
-            motivo: "Rebalance post-canje de horas extra",
-            fillFreeSlots: false,
-          });
-        } catch (_) {
-          // Non-critical
-        }
-      }
-
       return { canjeados: extras.length, bloque_creado: nuevoBloque.id };
     });
+
+    // Rebalancear DESPUÉS del transaction para que vea el bloque canje ya confirmado
+    try {
+      await reunionesAsistenteService.rebalanceUsuario(uid, fechaDestino, {
+        motivo: "Rebalance post-canje de horas extra",
+        fillFreeSlots: false,
+      });
+    } catch (_) {
+      // Non-critical
+    }
 
     return result;
   }
